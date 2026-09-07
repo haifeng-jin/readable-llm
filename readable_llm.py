@@ -26,10 +26,10 @@ EPS = 1e-6
 
 # ============================== Weight Initialization Helper ==============================
 
-def _make_matrix(rows, cols, scale=0.02, rng=None):
-    if rng is None:
-        rng = random.Random(42)
-    return [[rng.uniform(-scale, scale) for _ in range(cols)] for _ in range(rows)]
+_rng = random.Random(42)
+
+def _make_matrix(rows, cols, scale=0.02):
+    return [[_rng.uniform(-scale, scale) for _ in range(cols)] for _ in range(rows)]
 
 # ============================== Vocabulary & Tokenizer ==============================
 
@@ -66,7 +66,7 @@ def split_tokens(text, vocab_dict=vocab):
     return tokens
 
 class Tokenizer:
-    def __init__(self, vocab):
+    def __init__(self, vocab=vocab):
         self.vocab = vocab
         self.inv_vocab = {token_id: token for token, token_id in vocab.items()}
 
@@ -164,9 +164,8 @@ def rms_norm(tensor, gamma):
 class RMSNorm(Layer):
     """Encapsulates RMS normalization scale weights."""
 
-    def __init__(self, gamma=None, hidden_size=HIDDEN_SIZE):
-        # Immediate breakdown: gamma
-        self.gamma = gamma if gamma is not None else [1.0] * hidden_size
+    def __init__(self):
+        self.gamma = [1.0] * HIDDEN_SIZE
 
     def predict(self, tensor_or_vec):
         if isinstance(tensor_or_vec[0], list):
@@ -313,21 +312,10 @@ def group_0(rms_out, w_q, w_k, w_v):
 class Group(Layer):
     """Encapsulates Q, K, and V projection weights for a single attention group."""
 
-    def __init__(self, w_q=None, w_k=None, w_v=None, rng=None):
-        if rng is None:
-            rng = random.Random(42)
-        # Immediate breakdown: w_q, w_k, w_v
-        self.w_q = (
-            w_q
-            if w_q is not None
-            else [_make_matrix(HIDDEN_SIZE, D_HEAD, rng=rng) for _ in range(Q_HEADS)]
-        )
-        self.w_k = (
-            w_k if w_k is not None else _make_matrix(HIDDEN_SIZE, D_HEAD, rng=rng)
-        )
-        self.w_v = (
-            w_v if w_v is not None else _make_matrix(HIDDEN_SIZE, D_HEAD, rng=rng)
-        )
+    def __init__(self):
+        self.w_q = [_make_matrix(HIDDEN_SIZE, D_HEAD) for _ in range(Q_HEADS)]
+        self.w_k = _make_matrix(HIDDEN_SIZE, D_HEAD)
+        self.w_v = _make_matrix(HIDDEN_SIZE, D_HEAD)
 
     def predict(self, rms_out):
         return group_0(rms_out, self.w_q, self.w_k, self.w_v)
@@ -355,13 +343,8 @@ def gqa(rms_out, groups):
 class GQA(Layer):
     """Encapsulates grouped-query attention across all groups."""
 
-    def __init__(self, groups=None, rng=None):
-        # Immediate breakdown: groups
-        self.groups = (
-            groups
-            if groups is not None
-            else [Group(rng=rng) for _ in range(NUM_GROUPS)]
-        )
+    def __init__(self):
+        self.groups = [Group() for _ in range(NUM_GROUPS)]
 
     def predict(self, rms_out):
         return gqa(rms_out, self.groups)
@@ -377,15 +360,8 @@ def out_matmul(gqa_out, w_matmul):
 class OutMatmul(Layer):
     """Encapsulates output projection matrix for GQA."""
 
-    def __init__(self, w_matmul=None, rng=None):
-        if rng is None:
-            rng = random.Random(42)
-        # Immediate breakdown: w_matmul
-        self.w_matmul = (
-            w_matmul
-            if w_matmul is not None
-            else _make_matrix(HIDDEN_SIZE, HIDDEN_SIZE, rng=rng)
-        )
+    def __init__(self):
+        self.w_matmul = _make_matrix(HIDDEN_SIZE, HIDDEN_SIZE)
 
     def predict(self, gqa_out):
         return out_matmul(gqa_out, self.w_matmul)
@@ -406,29 +382,10 @@ def gqa_block(gqa_block_in, rms_norm, gqa, out_matmul):
 class GQABlock(Layer):
     """Encapsulates normalization, grouped-query attention, and output projection."""
 
-    def __init__(
-        self,
-        rms_norm=None,
-        gqa=None,
-        out_matmul=None,
-        rng=None,
-    ):
-        # Immediate breakdown: rms_norm, gqa, out_matmul
-        self.rms_norm = (
-            rms_norm
-            if rms_norm is not None
-            else RMSNorm()
-        )
-        self.gqa = (
-            gqa
-            if gqa is not None
-            else GQA(rng=rng)
-        )
-        self.out_matmul = (
-            out_matmul
-            if out_matmul is not None
-            else OutMatmul(rng=rng)
-        )
+    def __init__(self):
+        self.rms_norm = RMSNorm()
+        self.gqa = GQA()
+        self.out_matmul = OutMatmul()
 
     def predict(self, gqa_block_in):
         return gqa_block(gqa_block_in, self.rms_norm, self.gqa, self.out_matmul)
@@ -466,25 +423,10 @@ def expert(tensor, w_gate, w_up, w_down):
 class Expert(Layer):
     """Encapsulates SwiGLU projection weights for a single expert."""
 
-    def __init__(self, w_gate=None, w_up=None, w_down=None, rng=None):
-        if rng is None:
-            rng = random.Random(42)
-        # Immediate breakdown: w_gate, w_up, w_down
-        self.w_gate = (
-            w_gate
-            if w_gate is not None
-            else _make_matrix(HIDDEN_SIZE, INTER_SIZE, rng=rng)
-        )
-        self.w_up = (
-            w_up
-            if w_up is not None
-            else _make_matrix(HIDDEN_SIZE, INTER_SIZE, rng=rng)
-        )
-        self.w_down = (
-            w_down
-            if w_down is not None
-            else _make_matrix(INTER_SIZE, HIDDEN_SIZE, rng=rng)
-        )
+    def __init__(self):
+        self.w_gate = _make_matrix(HIDDEN_SIZE, INTER_SIZE)
+        self.w_up = _make_matrix(HIDDEN_SIZE, INTER_SIZE)
+        self.w_down = _make_matrix(INTER_SIZE, HIDDEN_SIZE)
 
     def predict(self, token_vec_or_tensor):
         if isinstance(token_vec_or_tensor[0], list):
@@ -537,15 +479,8 @@ def router(rms_out, w_router):
 class Router(Layer):
     """Encapsulates routing weights to select top-k experts."""
 
-    def __init__(self, w_router=None, rng=None):
-        if rng is None:
-            rng = random.Random(42)
-        # Immediate breakdown: w_router
-        self.w_router = (
-            w_router
-            if w_router is not None
-            else _make_matrix(HIDDEN_SIZE, NUM_EXPERTS, rng=rng)
-        )
+    def __init__(self):
+        self.w_router = _make_matrix(HIDDEN_SIZE, NUM_EXPERTS)
 
     def predict(self, rms_out):
         return router(rms_out, self.w_router)
@@ -578,13 +513,8 @@ def moe(rms_out, top_weights, experts):
 class MoE(Layer):
     """Encapsulates the collection of experts and weighted aggregation."""
 
-    def __init__(self, experts=None, rng=None):
-        # Immediate breakdown: experts
-        self.experts = (
-            experts
-            if experts is not None
-            else [Expert(rng=rng) for _ in range(NUM_EXPERTS)]
-        )
+    def __init__(self):
+        self.experts = [Expert() for _ in range(NUM_EXPERTS)]
 
     def predict(self, rms_out, top_weights):
         return moe(rms_out, top_weights, self.experts)
@@ -605,29 +535,10 @@ def moe_block(moe_in, rms_norm, router, moe):
 class MoEBlock(Layer):
     """Encapsulates normalization, router, and mixture of experts."""
 
-    def __init__(
-        self,
-        rms_norm=None,
-        router=None,
-        moe=None,
-        rng=None,
-    ):
-        # Immediate breakdown: rms_norm, router, moe
-        self.rms_norm = (
-            rms_norm
-            if rms_norm is not None
-            else RMSNorm()
-        )
-        self.router = (
-            router
-            if router is not None
-            else Router(rng=rng)
-        )
-        self.moe = (
-            moe
-            if moe is not None
-            else MoE(rng=rng)
-        )
+    def __init__(self):
+        self.rms_norm = RMSNorm()
+        self.router = Router()
+        self.moe = MoE()
 
     def predict(self, moe_in):
         return moe_block(moe_in, self.rms_norm, self.router, self.moe)
@@ -651,14 +562,9 @@ def decoder_block(decoder_in, gqa_block, moe_block):
 class DecoderBlock(Layer):
     """Encapsulates one GQA block and one MoE block."""
 
-    def __init__(self, gqa_block_layer=None, moe_block_layer=None, rng=None):
-        # Immediate breakdown: GQABlock, MoEBlock
-        self.gqa_block_layer = (
-            gqa_block_layer if gqa_block_layer is not None else GQABlock(rng=rng)
-        )
-        self.moe_block_layer = (
-            moe_block_layer if moe_block_layer is not None else MoEBlock(rng=rng)
-        )
+    def __init__(self):
+        self.gqa_block_layer = GQABlock()
+        self.moe_block_layer = MoEBlock()
 
     def predict(self, decoder_in):
         return decoder_block(decoder_in, self.gqa_block_layer, self.moe_block_layer)
@@ -676,13 +582,8 @@ def decoder(embed_out, decoder_blocks):
 class Decoder(Layer):
     """Encapsulates the sequential stack of decoder blocks."""
 
-    def __init__(self, decoder_blocks=None, rng=None):
-        # Immediate breakdown: decoder_blocks
-        self.decoder_blocks = (
-            decoder_blocks
-            if decoder_blocks is not None
-            else [DecoderBlock(rng=rng) for _ in range(NUM_DECODER_BLOCKS)]
-        )
+    def __init__(self):
+        self.decoder_blocks = [DecoderBlock() for _ in range(NUM_DECODER_BLOCKS)]
 
     def predict(self, embed_out):
         return decoder(embed_out, self.decoder_blocks)
@@ -706,18 +607,11 @@ def embedding(input_ids, embedding_table):
 class Embedding(Layer):
     """Encapsulates token embedding table and lookup."""
 
-    def __init__(self, embedding_table=None, rng=None):
-        if rng is None:
-            rng = random.Random(42)
-        # Immediate breakdown: embedding_table
-        self.embedding_table = (
-            embedding_table
-            if embedding_table is not None
-            else _make_matrix(VOCAB_SIZE, HIDDEN_SIZE, rng=rng)
-        )
+    def __init__(self):
+        self.embedding_table = _make_matrix(VOCAB_SIZE, HIDDEN_SIZE)
         self.embedding_table_T = [
-            [self.embedding_table[r][c] for r in range(len(self.embedding_table))]
-            for c in range(len(self.embedding_table[0]))
+            [self.embedding_table[r][c] for r in range(VOCAB_SIZE)]
+            for c in range(HIDDEN_SIZE)
         ]
 
     def predict(self, input_ids):
@@ -767,15 +661,12 @@ def lm_head(decoder_out, gamma, embedding_table_T):
 class LMHead(Layer):
     """Encapsulates final RMS normalization and projection to vocabulary logits."""
 
-    def __init__(self, gamma=None, embedding_table_T=None, rng=None):
-        if rng is None:
-            rng = random.Random(42)
-        # Immediate breakdown: gamma, embedding_table_T
-        self.gamma = gamma if gamma is not None else [1.0] * HIDDEN_SIZE
+    def __init__(self, embedding_table_T=None):
+        self.gamma = [1.0] * HIDDEN_SIZE
         self.embedding_table_T = (
             embedding_table_T
             if embedding_table_T is not None
-            else _make_matrix(HIDDEN_SIZE, VOCAB_SIZE, rng=rng)
+            else _make_matrix(HIDDEN_SIZE, VOCAB_SIZE)
         )
 
     def predict(self, decoder_out):
@@ -798,33 +689,11 @@ def greedy_sampler(model, input_ids):
 class Model(Layer):
     """Top-level LLM architecture encapsulating embedding, decoder, and LM head."""
 
-    def __init__(
-        self,
-        embedding=None,
-        decoder=None,
-        lm_head=None,
-        rng=None,
-        seed=42,
-    ):
-        if rng is None:
-            rng = random.Random(seed)
-
-        # Immediate breakdown: embedding, decoder, lm_head
-        self.embedding = (
-            embedding
-            if embedding is not None
-            else Embedding(rng=rng)
-        )
-        self.decoder = (
-            decoder
-            if decoder is not None
-            else Decoder(rng=rng)
-        )
-        self.lm_head = (
-            lm_head
-            if lm_head is not None
-            else LMHead(embedding_table_T=self.embedding.embedding_table_T, rng=rng)
-        )
+    def __init__(self):
+        _rng.seed(42)
+        self.embedding = Embedding()
+        self.decoder = Decoder()
+        self.lm_head = LMHead(self.embedding.embedding_table_T)
 
     def predict(self, input_ids):
         # input_ids: [seq_len]
@@ -853,7 +722,7 @@ class Model(Layer):
 def pipeline(prompt, tokenizer=None, model=None, max_new_tokens=10):
     # prompt: str
     if tokenizer is None:
-        tokenizer = Tokenizer(vocab)
+        tokenizer = Tokenizer()
     if model is None:
         model = Model()
     # input_ids: [seq_len]
