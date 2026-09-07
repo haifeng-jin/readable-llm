@@ -24,6 +24,13 @@ MAX_NEW_TOKENS = 128
 EOS_TOKEN_ID = 2
 EPS = 1e-6
 
+# ============================== Weight Initialization Helper ==============================
+
+def _make_matrix(rows, cols, scale=0.02, rng=None):
+    if rng is None:
+        rng = random.Random(42)
+    return [[rng.uniform(-scale, scale) for _ in range(cols)] for _ in range(rows)]
+
 # ============================== Vocabulary & Tokenizer ==============================
 
 vocab = {
@@ -290,10 +297,23 @@ def group_0(rms_out, w_q, w_k, w_v):
     return group_0_out
 
 class Group(Layer):
-    def __init__(self, w_q, w_k, w_v):
-        self.w_q = w_q
-        self.w_k = w_k
-        self.w_v = w_v
+    """Encapsulates Q, K, and V projection weights for a single attention group."""
+
+    def __init__(self, w_q=None, w_k=None, w_v=None, rng=None):
+        if rng is None:
+            rng = random.Random(42)
+        # Immediate breakdown: w_q, w_k, w_v
+        self.w_q = (
+            w_q
+            if w_q is not None
+            else [_make_matrix(HIDDEN_SIZE, D_HEAD, rng=rng) for _ in range(Q_HEADS)]
+        )
+        self.w_k = (
+            w_k if w_k is not None else _make_matrix(HIDDEN_SIZE, D_HEAD, rng=rng)
+        )
+        self.w_v = (
+            w_v if w_v is not None else _make_matrix(HIDDEN_SIZE, D_HEAD, rng=rng)
+        )
 
     def predict(self, rms_out):
         return group_0(rms_out, self.w_q, self.w_k, self.w_v)
@@ -340,10 +360,23 @@ def gqa_block(gqa_block_in, rms_norm, gqa, out_matmul):
     return gqa_block_out
 
 class GQABlock(Layer):
-    def __init__(self, gamma, groups, w_matmul):
-        self.gamma = gamma
-        self.groups = groups
-        self.w_matmul = w_matmul
+    """Encapsulates normalization, groups, and output projection."""
+
+    def __init__(self, gamma=None, groups=None, w_matmul=None, rng=None):
+        if rng is None:
+            rng = random.Random(42)
+        # Immediate breakdown: gamma, groups, w_matmul
+        self.gamma = gamma if gamma is not None else [1.0] * HIDDEN_SIZE
+        self.groups = (
+            groups
+            if groups is not None
+            else [Group(rng=rng) for _ in range(NUM_GROUPS)]
+        )
+        self.w_matmul = (
+            w_matmul
+            if w_matmul is not None
+            else _make_matrix(HIDDEN_SIZE, HIDDEN_SIZE, rng=rng)
+        )
 
     def predict(self, gqa_block_in):
         def norm_fn(t):
@@ -385,10 +418,27 @@ def expert(tensor, w_gate, w_up, w_down):
     return output
 
 class Expert(Layer):
-    def __init__(self, w_gate, w_up, w_down):
-        self.w_gate = w_gate
-        self.w_up = w_up
-        self.w_down = w_down
+    """Encapsulates SwiGLU projection weights for a single expert."""
+
+    def __init__(self, w_gate=None, w_up=None, w_down=None, rng=None):
+        if rng is None:
+            rng = random.Random(42)
+        # Immediate breakdown: w_gate, w_up, w_down
+        self.w_gate = (
+            w_gate
+            if w_gate is not None
+            else _make_matrix(HIDDEN_SIZE, INTER_SIZE, rng=rng)
+        )
+        self.w_up = (
+            w_up
+            if w_up is not None
+            else _make_matrix(HIDDEN_SIZE, INTER_SIZE, rng=rng)
+        )
+        self.w_down = (
+            w_down
+            if w_down is not None
+            else _make_matrix(INTER_SIZE, HIDDEN_SIZE, rng=rng)
+        )
 
     def predict(self, token_vec_or_tensor):
         if isinstance(token_vec_or_tensor[0], list):
@@ -477,10 +527,23 @@ def moe_block(moe_in, rms_norm, router, moe):
     return moe_out
 
 class MoEBlock(Layer):
-    def __init__(self, gamma, w_router, experts):
-        self.gamma = gamma
-        self.w_router = w_router
-        self.experts = experts
+    """Encapsulates normalization, routing, and experts."""
+
+    def __init__(self, gamma=None, w_router=None, experts=None, rng=None):
+        if rng is None:
+            rng = random.Random(42)
+        # Immediate breakdown: gamma, w_router, experts
+        self.gamma = gamma if gamma is not None else [1.0] * HIDDEN_SIZE
+        self.w_router = (
+            w_router
+            if w_router is not None
+            else _make_matrix(HIDDEN_SIZE, NUM_EXPERTS, rng=rng)
+        )
+        self.experts = (
+            experts
+            if experts is not None
+            else [Expert(rng=rng) for _ in range(NUM_EXPERTS)]
+        )
 
     def predict(self, moe_in):
         def norm_fn(t):
@@ -508,9 +571,16 @@ def decoder_block(decoder_in, gqa_block, moe_block):
     return decoder_out
 
 class DecoderBlock(Layer):
-    def __init__(self, gqa_block_layer, moe_block_layer):
-        self.gqa_block_layer = gqa_block_layer
-        self.moe_block_layer = moe_block_layer
+    """Encapsulates one GQA block and one MoE block."""
+
+    def __init__(self, gqa_block_layer=None, moe_block_layer=None, rng=None):
+        # Immediate breakdown: GQABlock, MoEBlock
+        self.gqa_block_layer = (
+            gqa_block_layer if gqa_block_layer is not None else GQABlock(rng=rng)
+        )
+        self.moe_block_layer = (
+            moe_block_layer if moe_block_layer is not None else MoEBlock(rng=rng)
+        )
 
     def predict(self, decoder_in):
         return decoder_block(decoder_in, self.gqa_block_layer, self.moe_block_layer)
@@ -594,16 +664,14 @@ def greedy_sampler(model, input_ids):
 
 # ============================== Model Class ==============================
 
-def _make_matrix(rows, cols, scale=0.02, rng=None):
-    if rng is None:
-        rng = random.Random(42)
-    return [[rng.uniform(-scale, scale) for _ in range(cols)] for _ in range(rows)]
-
 class Model(Layer):
-    def __init__(self, seed=42):
-        rng = random.Random(seed)
+    """Top-level LLM architecture encapsulating embedding, decoder blocks, and LM head."""
 
-        # Embedding table: [VOCAB_SIZE, HIDDEN_SIZE]
+    def __init__(self, decoder_blocks=None, rng=None, seed=42):
+        if rng is None:
+            rng = random.Random(seed)
+
+        # Immediate breakdown: embedding_table, decoder_blocks, lm_head_gamma
         self.embedding_table = _make_matrix(VOCAB_SIZE, HIDDEN_SIZE, rng=rng)
 
         # Tied embeddings: transpose of embedding table for lm_head: [HIDDEN_SIZE, VOCAB_SIZE]
@@ -611,34 +679,14 @@ class Model(Layer):
             [self.embedding_table[r][c] for r in range(VOCAB_SIZE)]
             for c in range(HIDDEN_SIZE)
         ]
+
+        self.decoder_blocks = (
+            decoder_blocks
+            if decoder_blocks is not None
+            else [DecoderBlock(rng=rng) for _ in range(NUM_DECODER_BLOCKS)]
+        )
+
         self.lm_head_gamma = [1.0] * HIDDEN_SIZE
-
-        # Stack of decoder blocks
-        self.decoder_blocks = []
-        for _ in range(NUM_DECODER_BLOCKS):
-            # GQA block
-            gqa_gamma = [1.0] * HIDDEN_SIZE
-            groups = []
-            for _ in range(NUM_GROUPS):
-                w_q = [_make_matrix(HIDDEN_SIZE, D_HEAD, rng=rng) for _ in range(Q_HEADS)]
-                w_k = _make_matrix(HIDDEN_SIZE, D_HEAD, rng=rng)
-                w_v = _make_matrix(HIDDEN_SIZE, D_HEAD, rng=rng)
-                groups.append(Group(w_q, w_k, w_v))
-            w_matmul = _make_matrix(HIDDEN_SIZE, HIDDEN_SIZE, rng=rng)
-            gqa_layer = GQABlock(gqa_gamma, groups, w_matmul)
-
-            # MoE block
-            moe_gamma = [1.0] * HIDDEN_SIZE
-            w_router = _make_matrix(HIDDEN_SIZE, NUM_EXPERTS, rng=rng)
-            experts = []
-            for _ in range(NUM_EXPERTS):
-                w_gate = _make_matrix(HIDDEN_SIZE, INTER_SIZE, rng=rng)
-                w_up = _make_matrix(HIDDEN_SIZE, INTER_SIZE, rng=rng)
-                w_down = _make_matrix(INTER_SIZE, HIDDEN_SIZE, rng=rng)
-                experts.append(Expert(w_gate, w_up, w_down))
-            moe_layer = MoEBlock(moe_gamma, w_router, experts)
-
-            self.decoder_blocks.append(DecoderBlock(gqa_layer, moe_layer))
 
     def embedding(self, input_ids):
         # input_ids: [seq_len]

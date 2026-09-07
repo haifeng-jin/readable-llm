@@ -72,6 +72,43 @@ class TestReadableLLM(unittest.TestCase):
         for cls in [Group, GQABlock, Expert, MoEBlock, DecoderBlock, Model]:
             self.assertTrue(issubclass(cls, Layer))
 
+    def test_immediate_breakdown_initialization(self):
+        # Verify each class initializes only its immediate breakdown
+        # 1. Group initializes its own projections
+        group = Group()
+        self.assertEqual(len(group.w_q), Q_HEADS)
+        self.assertEqual(len(group.w_k), HIDDEN_SIZE)
+        self.assertEqual(len(group.w_v), HIDDEN_SIZE)
+
+        # 2. GQABlock initializes Group instances
+        gqa_block_layer = GQABlock()
+        self.assertEqual(len(gqa_block_layer.groups), NUM_GROUPS)
+        for g in gqa_block_layer.groups:
+            self.assertIsInstance(g, Group)
+
+        # 3. Expert initializes its own projections
+        expert_layer = Expert()
+        self.assertEqual(len(expert_layer.w_gate), HIDDEN_SIZE)
+        self.assertEqual(len(expert_layer.w_up), HIDDEN_SIZE)
+        self.assertEqual(len(expert_layer.w_down), INTER_SIZE)
+
+        # 4. MoEBlock initializes Expert instances
+        moe_block_layer = MoEBlock()
+        self.assertEqual(len(moe_block_layer.experts), NUM_EXPERTS)
+        for exp in moe_block_layer.experts:
+            self.assertIsInstance(exp, Expert)
+
+        # 5. DecoderBlock initializes GQABlock and MoEBlock
+        decoder_block_layer = DecoderBlock()
+        self.assertIsInstance(decoder_block_layer.gqa_block_layer, GQABlock)
+        self.assertIsInstance(decoder_block_layer.moe_block_layer, MoEBlock)
+
+        # 6. Model initializes DecoderBlock instances
+        model = Model(seed=42)
+        self.assertEqual(len(model.decoder_blocks), NUM_DECODER_BLOCKS)
+        for db in model.decoder_blocks:
+            self.assertIsInstance(db, DecoderBlock)
+
     def test_ops(self):
         # matmul
         vec = [1.0, 2.0]
@@ -184,7 +221,6 @@ class TestReadableLLM(unittest.TestCase):
         # Test autoregressive generate
         output_ids = model.generate(input_ids, max_new_tokens=4)
         self.assertEqual(len(output_ids), len(input_ids) + 4)
-
 
     def test_pipeline(self):
         output = pipeline("What is 1+1?", max_new_tokens=2)
