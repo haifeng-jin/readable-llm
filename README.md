@@ -28,5 +28,5 @@ python readable_llm.py
 Run the full unit test suite:
 
 ```bash
-python -m unittest discover tests
+python test_all.py
 ```
