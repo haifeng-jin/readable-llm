@@ -269,6 +269,8 @@ def add(tensor_a, tensor_b):
 
 def norm_token(token_vec, gamma):
     """
+    model.predict -> ... -> rms_norm -> norm_token
+
     Args:
         token_vec: [hidden_size]
         gamma: [hidden_size]
@@ -291,6 +293,8 @@ def norm_token(token_vec, gamma):
 
 def rms_norm(tensor, gamma):
     """
+    model.predict -> (lm_head | gqa_block | moe_block) -> rms_norm
+
     Args:
         tensor: [seq_len, hidden_size]
         gamma: [hidden_size]
@@ -310,6 +314,8 @@ class RMSNorm(Layer):
 
     def predict(self, tensor_or_vec):
         """
+        model.predict -> (lm_head | gqa_block | moe_block) -> rms_norm
+
         Args:
             tensor_or_vec: [seq_len, hidden_size] or [hidden_size]
 
@@ -326,6 +332,8 @@ RmsNorm = RMSNorm
 
 def rope_pair(x0, x1, pos, i, d_head):
     """
+    model.predict -> decoder -> decoder_block -> gqa_block -> gqa -> group_0 -> rope -> rope_token -> rope_pair
+
     Args:
         x0: float
         x1: float
@@ -348,6 +356,8 @@ def rope_pair(x0, x1, pos, i, d_head):
 
 def rope_token(token_vec, pos):
     """
+    model.predict -> decoder -> decoder_block -> gqa_block -> gqa -> group_0 -> rope -> rope_token
+
     Args:
         token_vec: [d_head]
         pos: int
@@ -369,6 +379,8 @@ def rope_token(token_vec, pos):
 
 def rope_2d(x):
     """
+    model.predict -> decoder -> decoder_block -> gqa_block -> gqa -> group_0 -> rope -> rope_2d
+
     Args:
         x: [seq_len, d_head]
 
@@ -381,6 +393,8 @@ def rope_2d(x):
 
 def rope_3d(x):
     """
+    model.predict -> decoder -> decoder_block -> gqa_block -> gqa -> group_0 -> rope -> rope_3d
+
     Args:
         x: [q_heads, seq_len, d_head]
 
@@ -393,6 +407,8 @@ def rope_3d(x):
 
 def rope(x):
     """
+    model.predict -> decoder -> decoder_block -> gqa_block -> gqa -> group_0 -> rope
+
     Args:
         x: [seq_len, d_head] or [q_heads, seq_len, d_head]
 
@@ -407,6 +423,8 @@ def rope(x):
 
 def attention_token(q_token, k_T, v, i):
     """
+    model.predict -> decoder -> decoder_block -> gqa_block -> gqa -> group_0 -> attention_head -> single_attention_head -> attention_token
+
     Args:
         q_token: [d_head]
         k_T: [d_head, seq_len]
@@ -440,6 +458,8 @@ def attention_token(q_token, k_T, v, i):
 
 def single_attention_head(single_q, k, v):
     """
+    model.predict -> decoder -> decoder_block -> gqa_block -> gqa -> group_0 -> attention_head -> single_attention_head
+
     Args:
         single_q: [seq_len, d_head]
         k: [seq_len, d_head]
@@ -466,6 +486,8 @@ def single_attention_head(single_q, k, v):
 
 def attention_head(q, k, v):
     """
+    model.predict -> decoder -> decoder_block -> gqa_block -> gqa -> group_0 -> attention_head
+
     Args:
         q: [q_heads, seq_len, d_head]
         k: [seq_len, d_head]
@@ -496,6 +518,8 @@ def attention_head(q, k, v):
 
 def group_0(rms_out, w_q, w_k, w_v):
     """
+    model.predict -> decoder -> decoder_block -> gqa_block -> gqa -> group_0
+
     Args:
         rms_out: [seq_len, hidden_size]
         w_q: [q_heads, hidden_size, d_head]
@@ -531,6 +555,8 @@ class Group(Layer):
 
     def predict(self, rms_out):
         """
+        model.predict -> decoder -> decoder_block -> gqa_block -> gqa -> group_0
+
         Args:
             rms_out: [seq_len, hidden_size]
 
@@ -541,6 +567,8 @@ class Group(Layer):
 
 def gqa(rms_out, groups):
     """
+    model.predict -> decoder -> decoder_block -> gqa_block -> gqa
+
     Args:
         rms_out: [seq_len, hidden_size]
         groups: list of Group
@@ -572,6 +600,8 @@ class GQA(Layer):
 
     def predict(self, rms_out):
         """
+        model.predict -> decoder -> decoder_block -> gqa_block -> gqa
+
         Args:
             rms_out: [seq_len, hidden_size]
 
@@ -582,6 +612,8 @@ class GQA(Layer):
 
 def out_matmul(gqa_out, w_matmul):
     """
+    model.predict -> decoder -> decoder_block -> gqa_block -> out_matmul
+
     Args:
         gqa_out: [seq_len, hidden_size]
         w_matmul: [hidden_size, hidden_size]
@@ -601,6 +633,8 @@ class OutMatmul(Layer):
 
     def predict(self, gqa_out):
         """
+        model.predict -> decoder -> decoder_block -> gqa_block -> out_matmul
+
         Args:
             gqa_out: [seq_len, hidden_size]
 
@@ -611,6 +645,8 @@ class OutMatmul(Layer):
 
 def gqa_block(gqa_block_in, rms_norm, gqa, out_matmul):
     """
+    model.predict -> decoder -> decoder_block -> gqa_block
+
     Args:
         gqa_block_in: [seq_len, hidden_size]
         rms_norm: RMSNorm
@@ -640,6 +676,8 @@ class GQABlock(Layer):
 
     def predict(self, gqa_block_in):
         """
+        model.predict -> decoder -> decoder_block -> gqa_block
+
         Args:
             gqa_block_in: [seq_len, hidden_size]
 
@@ -652,6 +690,8 @@ class GQABlock(Layer):
 
 def expert_token(token_vec, w_gate, w_up, w_down):
     """
+    model.predict -> decoder -> decoder_block -> moe_block -> moe -> expert -> expert_token
+
     Args:
         token_vec: [hidden_size]
         w_gate: [hidden_size, inter_size]
@@ -681,6 +721,8 @@ def expert_token(token_vec, w_gate, w_up, w_down):
 
 def expert(tensor, w_gate, w_up, w_down):
     """
+    model.predict -> decoder -> decoder_block -> moe_block -> moe -> expert
+
     Args:
         tensor: [seq_len, hidden_size]
         w_gate: [hidden_size, inter_size]
@@ -704,6 +746,8 @@ class Expert(Layer):
 
     def predict(self, token_vec_or_tensor):
         """
+        model.predict -> decoder -> decoder_block -> moe_block -> moe -> expert
+
         Args:
             token_vec_or_tensor: [seq_len, hidden_size] or [hidden_size]
 
@@ -716,6 +760,8 @@ class Expert(Layer):
 
 def route_token(token_vec, w_router):
     """
+    model.predict -> decoder -> decoder_block -> moe_block -> router -> route_token
+
     Args:
         token_vec: [hidden_size]
         w_router: [hidden_size, num_experts]
@@ -752,6 +798,8 @@ def route_token(token_vec, w_router):
 
 def router(rms_out, w_router):
     """
+    model.predict -> decoder -> decoder_block -> moe_block -> router
+
     Args:
         rms_out: [seq_len, hidden_size]
         w_router: [hidden_size, num_experts]
@@ -771,6 +819,8 @@ class Router(Layer):
 
     def predict(self, rms_out):
         """
+        model.predict -> decoder -> decoder_block -> moe_block -> router
+
         Args:
             rms_out: [seq_len, hidden_size]
 
@@ -781,6 +831,8 @@ class Router(Layer):
 
 def moe_token(token_vec, top_weights, experts):
     """
+    model.predict -> decoder -> decoder_block -> moe_block -> moe -> moe_token
+
     Args:
         token_vec: [hidden_size]
         top_weights: [num_experts]
@@ -803,6 +855,8 @@ def moe_token(token_vec, top_weights, experts):
 
 def moe(rms_out, top_weights, experts):
     """
+    model.predict -> decoder -> decoder_block -> moe_block -> moe
+
     Args:
         rms_out: [seq_len, hidden_size]
         top_weights: [seq_len, num_experts]
@@ -826,6 +880,8 @@ class MoE(Layer):
 
     def predict(self, rms_out, top_weights):
         """
+        model.predict -> decoder -> decoder_block -> moe_block -> moe
+
         Args:
             rms_out: [seq_len, hidden_size]
             top_weights: [seq_len, num_experts]
@@ -837,6 +893,8 @@ class MoE(Layer):
 
 def moe_block(moe_in, rms_norm, router, moe):
     """
+    model.predict -> decoder -> decoder_block -> moe_block
+
     Args:
         moe_in: [seq_len, hidden_size]
         rms_norm: RMSNorm
@@ -866,6 +924,8 @@ class MoEBlock(Layer):
 
     def predict(self, moe_in):
         """
+        model.predict -> decoder -> decoder_block -> moe_block
+
         Args:
             moe_in: [seq_len, hidden_size]
 
@@ -878,6 +938,8 @@ class MoEBlock(Layer):
 
 def decoder_block(decoder_in, gqa_block, moe_block):
     """
+    model.predict -> decoder -> decoder_block
+
     Args:
         decoder_in: [seq_len, hidden_size]
         gqa_block: GQABlock
@@ -907,6 +969,8 @@ class DecoderBlock(Layer):
 
     def predict(self, decoder_in):
         """
+        model.predict -> decoder -> decoder_block
+
         Args:
             decoder_in: [seq_len, hidden_size]
 
@@ -917,6 +981,8 @@ class DecoderBlock(Layer):
 
 def decoder(embed_out, decoder_blocks):
     """
+    model.predict -> decoder
+
     Args:
         embed_out: [seq_len, hidden_size]
         decoder_blocks: list of DecoderBlock
@@ -938,6 +1004,8 @@ class Decoder(Layer):
 
     def predict(self, embed_out):
         """
+        model.predict -> decoder
+
         Args:
             embed_out: [seq_len, hidden_size]
 
@@ -950,6 +1018,8 @@ class Decoder(Layer):
 
 def lookup(token_id, embedding_table):
     """
+    model.predict -> embedding -> lookup
+
     Args:
         token_id: int
         embedding_table: [vocab_size, hidden_size]
@@ -963,6 +1033,8 @@ def lookup(token_id, embedding_table):
 
 def embedding(input_ids, embedding_table):
     """
+    model.predict -> embedding
+
     Args:
         input_ids: [seq_len]
         embedding_table: [vocab_size, hidden_size]
@@ -986,6 +1058,8 @@ class Embedding(Layer):
 
     def predict(self, input_ids):
         """
+        model.predict -> embedding
+
         Args:
             input_ids: [seq_len]
 
@@ -996,6 +1070,8 @@ class Embedding(Layer):
 
 def matmul_token(token_vec, embedding_table_T):
     """
+    model.predict -> lm_head -> logits_matmul -> matmul_token
+
     Args:
         token_vec: [hidden_size]
         embedding_table_T: [hidden_size, vocab_size]
@@ -1018,6 +1094,8 @@ def matmul_token(token_vec, embedding_table_T):
 
 def logits_matmul(rms_out, embedding_table_T):
     """
+    model.predict -> lm_head -> logits_matmul
+
     Args:
         rms_out: [seq_len, hidden_size]
         embedding_table_T: [hidden_size, vocab_size]
@@ -1031,6 +1109,8 @@ def logits_matmul(rms_out, embedding_table_T):
 
 def slice_last(all_logits):
     """
+    model.predict -> lm_head -> slice_last
+
     Args:
         all_logits: [seq_len, vocab_size]
 
@@ -1043,6 +1123,8 @@ def slice_last(all_logits):
 
 def lm_head(decoder_out, gamma, embedding_table_T):
     """
+    model.predict -> lm_head
+
     Args:
         decoder_out: [seq_len, hidden_size]
         gamma: [hidden_size]
@@ -1076,6 +1158,8 @@ class LMHead(Layer):
 
     def predict(self, decoder_out):
         """
+        model.predict -> lm_head
+
         Args:
             decoder_out: [seq_len, hidden_size]
 
