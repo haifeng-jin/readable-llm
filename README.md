@@ -1,6 +1,6 @@
 # readable-llm
 
-A clean, educational, and end-to-end runnable implementation of a modern Large Language Model in Python.
+A clean, educational, and end-to-end runnable implementation of a modern Large Language Model in a single pure Python file, with zero external dependencies.
 
 This repository implements every tensor operation described in the article **"The Anatomy of an LLM: Every tensor operation explained with code and diagrams"**, covering:
 
@@ -40,42 +40,37 @@ The default reference configuration matches the article:
 
 ## Project Structure
 
+All production code is contained in a single standalone file:
+
 ```
 readable-llm/
-├── readable_llm/
-│   ├── __init__.py      # Package exports
-│   ├── tokenizer.py     # Vocabulary and Tokenizer
-│   ├── ops.py           # Matmul, Add, SiLU, Softmax, Argmax, RMSNorm
-│   ├── rope.py          # Rotary Position Embedding (2D and 3D)
-│   ├── attention.py     # Causal attention token, single head, multi-head
-│   ├── gqa.py           # Grouped-Query Attention blocks and groups
-│   ├── moe.py           # Top-K router and SwiGLU expert layers
-│   ├── decoder.py       # Decoder block and stack
-│   ├── head.py          # Embedding lookup and LM head
-│   ├── sampler.py       # Greedy autoregressive sampler
-│   └── model.py         # Full Model class and generate loop
-├── main.py              # End-to-end runnable demonstration
+├── readable_llm.py   # Complete standalone production implementation
+├── main.py           # Entrypoint demonstration
 ├── tests/
-│   └── test_all.py      # Complete test suite
-├── requirements.txt
-└── pyproject.toml
+│   └── test_all.py   # Unit test suite
+├── requirements.txt  # Zero external dependencies
+├── pyproject.toml
+└── README.md
 ```
 
 ## Quick Start
 
-### Installation
-
-Clone the repository and install requirements:
+No third-party packages or C extensions are required. You only need Python 3.9+:
 
 ```bash
 git clone https://github.com/haifeng-jin/readable-llm.git
 cd readable-llm
-pip install -r requirements.txt
 ```
 
 ### Run the Demo
 
 Run the end-to-end demonstration script:
+
+```bash
+python3 readable_llm.py
+```
+
+or:
 
 ```bash
 python3 main.py

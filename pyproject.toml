@@ -5,14 +5,10 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "readable-llm"
 version = "0.1.0"
-description = "A clean, educational, and end-to-end runnable modern LLM in Python."
+description = "A clean, educational, and end-to-end runnable modern LLM in pure Python."
 readme = "README.md"
 requires-python = ">=3.9"
-dependencies = [
-    "numpy>=1.24.0",
-]
+dependencies = []
 
-[project.optional-dependencies]
-dev = [
-    "pytest>=7.0",
-]
+[tool.setuptools]
+py-modules = ["readable_llm"]

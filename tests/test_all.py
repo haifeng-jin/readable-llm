@@ -1,5 +1,4 @@
 import unittest
-import math
 from readable_llm import (
     Tokenizer,
     vocab,
@@ -83,17 +82,14 @@ class TestReadableLLM(unittest.TestCase):
         v = [3.0, 4.0]
         gamma = [1.0, 1.0]
         normed = norm_token(v, gamma)
-        # rms is sqrt((9+16)/2) = sqrt(12.5) ~= 3.5355
         self.assertEqual(len(normed), 2)
 
     def test_rope(self):
-        # Test 2D
         x_2d = [[1.0, 2.0], [3.0, 4.0]]
         out_2d = rope(x_2d)
         self.assertEqual(len(out_2d), 2)
         self.assertEqual(len(out_2d[0]), 2)
 
-        # Test 3D
         x_3d = [[[1.0, 2.0], [3.0, 4.0]], [[5.0, 6.0], [7.0, 8.0]]]
         out_3d = rope(x_3d)
         self.assertEqual(len(out_3d), 2)
@@ -110,12 +106,10 @@ class TestReadableLLM(unittest.TestCase):
         k = [[1.0, 0.0] for _ in range(seq_len)]
         v = [[0.5, 0.5] for _ in range(seq_len)]
 
-        # single_attention_head
         single_out = single_attention_head(single_q, k, v)
         self.assertEqual(len(single_out), seq_len)
         self.assertEqual(len(single_out[0]), d_head)
 
-        # multi-head attention
         q = [single_q for _ in range(q_heads)]
         attn_out = attention_head(q, k, v)
         self.assertEqual(len(attn_out), seq_len)
@@ -133,7 +127,6 @@ class TestReadableLLM(unittest.TestCase):
 
         dummy_in = [[0.1] * hidden_size for _ in range(seq_len)]
 
-        # Group 0
         w_q = [[[0.01] * d_head for _ in range(hidden_size)] for _ in range(q_heads)]
         w_k = [[0.01] * d_head for _ in range(hidden_size)]
         w_v = [[0.01] * d_head for _ in range(hidden_size)]
@@ -141,19 +134,16 @@ class TestReadableLLM(unittest.TestCase):
         self.assertEqual(len(g0_out), seq_len)
         self.assertEqual(len(g0_out[0]), head_dim)
 
-        # GQA with 3 groups -> hidden_size = 12
         groups = [Group(w_q, w_k, w_v) for _ in range(num_groups)]
         gqa_out = gqa(dummy_in, groups)
         self.assertEqual(len(gqa_out), seq_len)
         self.assertEqual(len(gqa_out[0]), hidden_size)
 
-        # Out matmul
         w_matmul = [[0.01] * hidden_size for _ in range(hidden_size)]
         gqa_block_out = out_matmul(gqa_out, w_matmul)
         self.assertEqual(len(gqa_block_out), seq_len)
         self.assertEqual(len(gqa_block_out[0]), hidden_size)
 
-        # MoE
         w_router = [[0.01] * num_experts for _ in range(hidden_size)]
         top_w = router(dummy_in, w_router)
         self.assertEqual(len(top_w), seq_len)
@@ -184,7 +174,6 @@ class TestReadableLLM(unittest.TestCase):
         logits = model.predict(input_ids)
         self.assertEqual(len(logits), 1868)
 
-        # Test generate
         output_ids = model.generate(input_ids, max_new_tokens=4)
         self.assertEqual(len(output_ids), len(input_ids) + 4)
 
