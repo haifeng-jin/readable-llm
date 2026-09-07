@@ -1,6 +1,17 @@
 import unittest
 from readable_llm import (
+    VOCAB_SIZE,
+    HIDDEN_SIZE,
+    NUM_DECODER_BLOCKS,
+    NUM_GROUPS,
+    Q_HEADS,
+    D_HEAD,
+    HEAD_DIM,
+    NUM_EXPERTS,
+    TOP_K,
+    INTER_SIZE,
     Tokenizer,
+    Layer,
     vocab,
     split_tokens,
     matmul,
@@ -55,6 +66,11 @@ class TestReadableLLM(unittest.TestCase):
         decoded = tokenizer.decode(encoded)
         self.assertEqual(decoded, "Whatis 1+1?")
 
+    def test_layer_base_class(self):
+        # Verify that all neural network classes inherit from Layer
+        for cls in [Group, GQABlock, Expert, MoEBlock, DecoderBlock, Model]:
+            self.assertTrue(issubclass(cls, Layer))
+
     def test_ops(self):
         # matmul
         vec = [1.0, 2.0]
@@ -98,82 +114,73 @@ class TestReadableLLM(unittest.TestCase):
 
     def test_attention(self):
         seq_len = 3
-        q_heads = 2
-        d_head = 2
-        head_dim = q_heads * d_head
-
         single_q = [[1.0, 0.0] for _ in range(seq_len)]
         k = [[1.0, 0.0] for _ in range(seq_len)]
         v = [[0.5, 0.5] for _ in range(seq_len)]
 
         single_out = single_attention_head(single_q, k, v)
         self.assertEqual(len(single_out), seq_len)
-        self.assertEqual(len(single_out[0]), d_head)
+        self.assertEqual(len(single_out[0]), D_HEAD)
 
-        q = [single_q for _ in range(q_heads)]
+        q = [single_q for _ in range(Q_HEADS)]
         attn_out = attention_head(q, k, v)
         self.assertEqual(len(attn_out), seq_len)
-        self.assertEqual(len(attn_out[0]), head_dim)
+        self.assertEqual(len(attn_out[0]), HEAD_DIM)
 
     def test_gqa_and_moe(self):
         seq_len = 3
-        hidden_size = 12
-        q_heads = 2
-        d_head = 2
-        head_dim = q_heads * d_head
-        num_groups = 3
-        num_experts = 3
-        inter_size = 16
+        dummy_in = [[0.1] * HIDDEN_SIZE for _ in range(seq_len)]
 
-        dummy_in = [[0.1] * hidden_size for _ in range(seq_len)]
+        w_q = [[[0.01] * D_HEAD for _ in range(HIDDEN_SIZE)] for _ in range(Q_HEADS)]
+        w_k = [[0.01] * D_HEAD for _ in range(HIDDEN_SIZE)]
+        w_v = [[0.01] * D_HEAD for _ in range(HIDDEN_SIZE)]
 
-        w_q = [[[0.01] * d_head for _ in range(hidden_size)] for _ in range(q_heads)]
-        w_k = [[0.01] * d_head for _ in range(hidden_size)]
-        w_v = [[0.01] * d_head for _ in range(hidden_size)]
-        g0_out = group_0(dummy_in, w_q, w_k, w_v)
+        group_layer = Group(w_q, w_k, w_v)
+        # Test .predict() and callable forward pass
+        g0_out = group_layer.predict(dummy_in)
         self.assertEqual(len(g0_out), seq_len)
-        self.assertEqual(len(g0_out[0]), head_dim)
+        self.assertEqual(len(g0_out[0]), HEAD_DIM)
+        self.assertEqual(group_layer(dummy_in), g0_out)
 
-        groups = [Group(w_q, w_k, w_v) for _ in range(num_groups)]
+        groups = [Group(w_q, w_k, w_v) for _ in range(NUM_GROUPS)]
         gqa_out = gqa(dummy_in, groups)
         self.assertEqual(len(gqa_out), seq_len)
-        self.assertEqual(len(gqa_out[0]), hidden_size)
+        self.assertEqual(len(gqa_out[0]), HIDDEN_SIZE)
 
-        w_matmul = [[0.01] * hidden_size for _ in range(hidden_size)]
+        w_matmul = [[0.01] * HIDDEN_SIZE for _ in range(HIDDEN_SIZE)]
         gqa_block_out = out_matmul(gqa_out, w_matmul)
         self.assertEqual(len(gqa_block_out), seq_len)
-        self.assertEqual(len(gqa_block_out[0]), hidden_size)
+        self.assertEqual(len(gqa_block_out[0]), HIDDEN_SIZE)
 
-        w_router = [[0.01] * num_experts for _ in range(hidden_size)]
+        # MoE
+        w_router = [[0.01] * NUM_EXPERTS for _ in range(HIDDEN_SIZE)]
         top_w = router(dummy_in, w_router)
         self.assertEqual(len(top_w), seq_len)
-        self.assertEqual(len(top_w[0]), num_experts)
+        self.assertEqual(len(top_w[0]), NUM_EXPERTS)
 
-        w_gate = [[0.01] * inter_size for _ in range(hidden_size)]
-        w_up = [[0.01] * inter_size for _ in range(hidden_size)]
-        w_down = [[0.01] * hidden_size for _ in range(inter_size)]
-        experts = [Expert(w_gate, w_up, w_down) for _ in range(num_experts)]
+        w_gate = [[0.01] * INTER_SIZE for _ in range(HIDDEN_SIZE)]
+        w_up = [[0.01] * INTER_SIZE for _ in range(HIDDEN_SIZE)]
+        w_down = [[0.01] * HIDDEN_SIZE for _ in range(INTER_SIZE)]
+        expert_layer = Expert(w_gate, w_up, w_down)
+        single_expert_out = expert_layer.predict(dummy_in[0])
+        self.assertEqual(len(single_expert_out), HIDDEN_SIZE)
+
+        experts = [Expert(w_gate, w_up, w_down) for _ in range(NUM_EXPERTS)]
         moe_out = moe(dummy_in, top_w, experts)
         self.assertEqual(len(moe_out), seq_len)
-        self.assertEqual(len(moe_out[0]), hidden_size)
+        self.assertEqual(len(moe_out[0]), HIDDEN_SIZE)
 
     def test_model_end_to_end(self):
-        model = Model(
-            vocab_size=1868,
-            hidden_size=12,
-            num_decoder_blocks=2,
-            num_groups=3,
-            q_heads=2,
-            d_head=2,
-            num_experts=3,
-            top_k=2,
-            inter_size=16,
-            seed=42,
-        )
+        # Model initializes with constants directly, zero size arguments
+        model = Model(seed=42)
         input_ids = [1867, 318, 352, 10, 16, 30]
-        logits = model.predict(input_ids)
-        self.assertEqual(len(logits), 1868)
 
+        # Test predict method and __call__
+        logits = model.predict(input_ids)
+        self.assertEqual(len(logits), VOCAB_SIZE)
+        self.assertEqual(model(input_ids), logits)
+
+        # Test autoregressive generate
         output_ids = model.generate(input_ids, max_new_tokens=4)
         self.assertEqual(len(output_ids), len(input_ids) + 4)
 

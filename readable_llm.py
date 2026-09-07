@@ -7,7 +7,24 @@ Large Language Model in pure Python with zero external dependencies.
 import math
 import random
 
-# ============================== Constants & Vocab ==============================
+# ============================== Model Architecture Constants ==============================
+
+VOCAB_SIZE = 2000
+HIDDEN_SIZE = 12
+NUM_DECODER_BLOCKS = 2
+NUM_GROUPS = 3
+Q_HEADS = 2
+D_HEAD = 2
+HEAD_DIM = Q_HEADS * D_HEAD  # 4
+NUM_EXPERTS = 3
+TOP_K = 2
+INTER_SIZE = 16
+
+MAX_NEW_TOKENS = 128
+EOS_TOKEN_ID = 2
+EPS = 1e-6
+
+# ============================== Vocabulary & Tokenizer ==============================
 
 vocab = {
     "<pad>": 0,
@@ -22,13 +39,6 @@ vocab = {
     " 1": 352,
     "What": 1867,
 }
-
-MAX_NEW_TOKENS = 128
-EOS_TOKEN_ID = 2
-EPS = 1e-6
-TOP_K = 2
-
-# ============================== Tokenizer ==============================
 
 def split_tokens(text, vocab_dict=vocab):
     # Chops the input string into individual tokens from vocab
@@ -62,6 +72,21 @@ class Tokenizer:
     def decode(self, token_ids):
         # token_ids: [seq_len]
         return "".join(self.inv_vocab.get(token_id, f"<{token_id}>") for token_id in token_ids)
+
+# ============================== Base Neural Network Class ==============================
+
+class Layer:
+    """Base class for all neural network modules.
+    
+    Every layer implements .predict() as its forward pass method.
+    Calling an instance directly delegates to .predict().
+    """
+
+    def predict(self, *args, **kwargs):
+        raise NotImplementedError
+
+    def __call__(self, *args, **kwargs):
+        return self.predict(*args, **kwargs)
 
 # ============================== Math & Basic Tensor Ops ==============================
 
@@ -264,13 +289,13 @@ def group_0(rms_out, w_q, w_k, w_v):
     group_0_out = attention_head(q, k, v)
     return group_0_out
 
-class Group:
+class Group(Layer):
     def __init__(self, w_q, w_k, w_v):
         self.w_q = w_q
         self.w_k = w_k
         self.w_v = w_v
 
-    def __call__(self, rms_out):
+    def predict(self, rms_out):
         return group_0(rms_out, self.w_q, self.w_k, self.w_v)
 
 def gqa(rms_out, groups):
@@ -314,13 +339,13 @@ def gqa_block(gqa_block_in, rms_norm, gqa, out_matmul):
     gqa_block_out = out_matmul(gqa_out)
     return gqa_block_out
 
-class GQABlock:
+class GQABlock(Layer):
     def __init__(self, gamma, groups, w_matmul):
         self.gamma = gamma
         self.groups = groups
         self.w_matmul = w_matmul
 
-    def __call__(self, gqa_block_in):
+    def predict(self, gqa_block_in):
         def norm_fn(t):
             return rms_norm(t, self.gamma)
         def gqa_fn(r):
@@ -359,13 +384,13 @@ def expert(tensor, w_gate, w_up, w_down):
     output = [expert_token(token_vec, w_gate, w_up, w_down) for token_vec in tensor]
     return output
 
-class Expert:
+class Expert(Layer):
     def __init__(self, w_gate, w_up, w_down):
         self.w_gate = w_gate
         self.w_up = w_up
         self.w_down = w_down
 
-    def __call__(self, token_vec_or_tensor):
+    def predict(self, token_vec_or_tensor):
         if isinstance(token_vec_or_tensor[0], list):
             return expert(token_vec_or_tensor, self.w_gate, self.w_up, self.w_down)
         return expert_token(token_vec_or_tensor, self.w_gate, self.w_up, self.w_down)
@@ -451,13 +476,13 @@ def moe_block(moe_in, rms_norm, router, moe):
     moe_out = moe(rms_out, top_weights)
     return moe_out
 
-class MoEBlock:
+class MoEBlock(Layer):
     def __init__(self, gamma, w_router, experts):
         self.gamma = gamma
         self.w_router = w_router
         self.experts = experts
 
-    def __call__(self, moe_in):
+    def predict(self, moe_in):
         def norm_fn(t):
             return rms_norm(t, self.gamma)
         def router_fn(r):
@@ -482,12 +507,12 @@ def decoder_block(decoder_in, gqa_block, moe_block):
     decoder_out = add(residual_1, moe_out)
     return decoder_out
 
-class DecoderBlock:
+class DecoderBlock(Layer):
     def __init__(self, gqa_block_layer, moe_block_layer):
         self.gqa_block_layer = gqa_block_layer
         self.moe_block_layer = moe_block_layer
 
-    def __call__(self, decoder_in):
+    def predict(self, decoder_in):
         return decoder_block(decoder_in, self.gqa_block_layer, self.moe_block_layer)
 
 def decoder(embed_out, decoder_blocks):
@@ -574,65 +599,42 @@ def _make_matrix(rows, cols, scale=0.02, rng=None):
         rng = random.Random(42)
     return [[rng.uniform(-scale, scale) for _ in range(cols)] for _ in range(rows)]
 
-class Model:
-    def __init__(
-        self,
-        vocab_size=2000,
-        hidden_size=12,
-        num_decoder_blocks=2,
-        num_groups=3,
-        q_heads=2,
-        d_head=2,
-        num_experts=3,
-        top_k=2,
-        inter_size=16,
-        seed=42,
-    ):
-        self.vocab_size = vocab_size
-        self.hidden_size = hidden_size
-        self.num_decoder_blocks = num_decoder_blocks
-        self.num_groups = num_groups
-        self.q_heads = q_heads
-        self.d_head = d_head
-        self.head_dim = q_heads * d_head
-        self.num_experts = num_experts
-        self.top_k = top_k
-        self.inter_size = inter_size
-
+class Model(Layer):
+    def __init__(self, seed=42):
         rng = random.Random(seed)
 
-        # Embedding table: [vocab_size, hidden_size]
-        self.embedding_table = _make_matrix(vocab_size, hidden_size, rng=rng)
+        # Embedding table: [VOCAB_SIZE, HIDDEN_SIZE]
+        self.embedding_table = _make_matrix(VOCAB_SIZE, HIDDEN_SIZE, rng=rng)
 
-        # Tied embeddings: transpose of embedding table for lm_head: [hidden_size, vocab_size]
+        # Tied embeddings: transpose of embedding table for lm_head: [HIDDEN_SIZE, VOCAB_SIZE]
         self.embedding_table_T = [
-            [self.embedding_table[r][c] for r in range(vocab_size)]
-            for c in range(hidden_size)
+            [self.embedding_table[r][c] for r in range(VOCAB_SIZE)]
+            for c in range(HIDDEN_SIZE)
         ]
-        self.lm_head_gamma = [1.0] * hidden_size
+        self.lm_head_gamma = [1.0] * HIDDEN_SIZE
 
         # Stack of decoder blocks
         self.decoder_blocks = []
-        for _ in range(num_decoder_blocks):
+        for _ in range(NUM_DECODER_BLOCKS):
             # GQA block
-            gqa_gamma = [1.0] * hidden_size
+            gqa_gamma = [1.0] * HIDDEN_SIZE
             groups = []
-            for _ in range(num_groups):
-                w_q = [_make_matrix(hidden_size, d_head, rng=rng) for _ in range(q_heads)]
-                w_k = _make_matrix(hidden_size, d_head, rng=rng)
-                w_v = _make_matrix(hidden_size, d_head, rng=rng)
+            for _ in range(NUM_GROUPS):
+                w_q = [_make_matrix(HIDDEN_SIZE, D_HEAD, rng=rng) for _ in range(Q_HEADS)]
+                w_k = _make_matrix(HIDDEN_SIZE, D_HEAD, rng=rng)
+                w_v = _make_matrix(HIDDEN_SIZE, D_HEAD, rng=rng)
                 groups.append(Group(w_q, w_k, w_v))
-            w_matmul = _make_matrix(hidden_size, hidden_size, rng=rng)
+            w_matmul = _make_matrix(HIDDEN_SIZE, HIDDEN_SIZE, rng=rng)
             gqa_layer = GQABlock(gqa_gamma, groups, w_matmul)
 
             # MoE block
-            moe_gamma = [1.0] * hidden_size
-            w_router = _make_matrix(hidden_size, num_experts, rng=rng)
+            moe_gamma = [1.0] * HIDDEN_SIZE
+            w_router = _make_matrix(HIDDEN_SIZE, NUM_EXPERTS, rng=rng)
             experts = []
-            for _ in range(num_experts):
-                w_gate = _make_matrix(hidden_size, inter_size, rng=rng)
-                w_up = _make_matrix(hidden_size, inter_size, rng=rng)
-                w_down = _make_matrix(inter_size, hidden_size, rng=rng)
+            for _ in range(NUM_EXPERTS):
+                w_gate = _make_matrix(HIDDEN_SIZE, INTER_SIZE, rng=rng)
+                w_up = _make_matrix(HIDDEN_SIZE, INTER_SIZE, rng=rng)
+                w_down = _make_matrix(INTER_SIZE, HIDDEN_SIZE, rng=rng)
                 experts.append(Expert(w_gate, w_up, w_down))
             moe_layer = MoEBlock(moe_gamma, w_router, experts)
 
@@ -640,26 +642,26 @@ class Model:
 
     def embedding(self, input_ids):
         # input_ids: [seq_len]
-        # embed_out: [seq_len, hidden_size]
+        # embed_out: [seq_len, HIDDEN_SIZE]
         return embedding(input_ids, self.embedding_table)
 
     def decoder(self, embed_out):
-        # embed_out: [seq_len, hidden_size]
-        # decoder_out: [seq_len, hidden_size]
+        # embed_out: [seq_len, HIDDEN_SIZE]
+        # decoder_out: [seq_len, HIDDEN_SIZE]
         return decoder(embed_out, self.decoder_blocks)
 
     def lm_head(self, decoder_out):
-        # decoder_out: [seq_len, hidden_size]
-        # logits: [vocab_size]
+        # decoder_out: [seq_len, HIDDEN_SIZE]
+        # logits: [VOCAB_SIZE]
         return lm_head(decoder_out, self.lm_head_gamma, self.embedding_table_T)
 
     def predict(self, input_ids):
         # input_ids: [seq_len]
-        # embed_out: [seq_len, hidden_size]
+        # embed_out: [seq_len, HIDDEN_SIZE]
         embed_out = self.embedding(input_ids)
-        # decoder_out: [seq_len, hidden_size]
+        # decoder_out: [seq_len, HIDDEN_SIZE]
         decoder_out = self.decoder(embed_out)
-        # logits: [vocab_size]
+        # logits: [VOCAB_SIZE]
         logits = self.lm_head(decoder_out)
         return logits
 
@@ -683,20 +685,7 @@ def main():
     print("=" * 60)
 
     tokenizer = Tokenizer(vocab)
-    vocab_size = max(vocab.values()) + 1
-
-    model = Model(
-        vocab_size=vocab_size,
-        hidden_size=12,
-        num_decoder_blocks=2,
-        num_groups=3,
-        q_heads=2,
-        d_head=2,
-        num_experts=3,
-        top_k=2,
-        inter_size=16,
-        seed=42,
-    )
+    model = Model(seed=42)
 
     prompt = "What is 1+1?"
     print(f"\n1. Input Text:\n   {prompt!r}")
@@ -705,13 +694,13 @@ def main():
     print(f"\n2. Token IDs (seq_len={len(input_ids)}):\n   {input_ids}")
 
     embed_out = model.embedding(input_ids)
-    print(f"\n3. Embedding Output Shape:\n   [{len(embed_out)}, {len(embed_out[0])}] (seq_len, hidden_size)")
+    print(f"\n3. Embedding Output Shape:\n   [{len(embed_out)}, {len(embed_out[0])}] (seq_len, HIDDEN_SIZE)")
 
     decoder_out = model.decoder(embed_out)
-    print(f"\n4. Decoder Output Shape:\n   [{len(decoder_out)}, {len(decoder_out[0])}] (seq_len, hidden_size)")
+    print(f"\n4. Decoder Output Shape:\n   [{len(decoder_out)}, {len(decoder_out[0])}] (seq_len, HIDDEN_SIZE)")
 
-    logits = model.lm_head(decoder_out)
-    print(f"\n5. LM Head Logits Length:\n   [{len(logits)}] (vocab_size)")
+    logits = model.predict(input_ids)
+    print(f"\n5. Model Predict Logits Length:\n   [{len(logits)}] (VOCAB_SIZE)")
 
     print("\n6. Generating tokens autoregressively...")
     generated_ids = model.generate(input_ids, max_new_tokens=6)
