@@ -296,8 +296,6 @@ class RMSNorm(Layer):
     """Encapsulates RMS normalization scale weights."""
 
     def __init__(self):
-        """
-        """
         self.gamma = _init_weights(HIDDEN_SIZE)
 
     def predict(self, tensor_or_vec):
@@ -517,8 +515,6 @@ class Group(Layer):
     """Encapsulates Q, K, and V projection weights for a single attention group."""
 
     def __init__(self):
-        """
-        """
         self.w_q = _init_weights(Q_HEADS, HIDDEN_SIZE, D_HEAD)
         self.w_k = _init_weights(HIDDEN_SIZE, D_HEAD)
         self.w_v = _init_weights(HIDDEN_SIZE, D_HEAD)
@@ -562,8 +558,6 @@ class GQA(Layer):
     """Encapsulates grouped-query attention across all groups."""
 
     def __init__(self):
-        """
-        """
         self.groups = [Group() for _ in range(NUM_GROUPS)]
 
     def predict(self, rms_out):
@@ -593,8 +587,6 @@ class OutMatmul(Layer):
     """Encapsulates output projection matrix for GQA."""
 
     def __init__(self):
-        """
-        """
         self.w_matmul = _init_weights(HIDDEN_SIZE, HIDDEN_SIZE)
 
     def predict(self, gqa_out):
@@ -632,8 +624,6 @@ class GQABlock(Layer):
     """Encapsulates normalization, grouped-query attention, and output projection."""
 
     def __init__(self):
-        """
-        """
         self.rms_norm = RMSNorm()
         self.gqa = GQA()
         self.out_matmul = OutMatmul()
@@ -698,8 +688,6 @@ class Expert(Layer):
     """Encapsulates SwiGLU projection weights for a single expert."""
 
     def __init__(self):
-        """
-        """
         self.w_gate = _init_weights(HIDDEN_SIZE, INTER_SIZE)
         self.w_up = _init_weights(HIDDEN_SIZE, INTER_SIZE)
         self.w_down = _init_weights(INTER_SIZE, HIDDEN_SIZE)
@@ -769,8 +757,6 @@ class Router(Layer):
     """Encapsulates routing weights to select top-k experts."""
 
     def __init__(self):
-        """
-        """
         self.w_router = _init_weights(HIDDEN_SIZE, NUM_EXPERTS)
 
     def predict(self, rms_out):
@@ -826,8 +812,6 @@ class MoE(Layer):
     """Encapsulates the collection of experts and weighted aggregation."""
 
     def __init__(self):
-        """
-        """
         self.experts = [Expert() for _ in range(NUM_EXPERTS)]
 
     def predict(self, rms_out, top_weights):
@@ -866,8 +850,6 @@ class MoEBlock(Layer):
     """Encapsulates normalization, router, and mixture of experts."""
 
     def __init__(self):
-        """
-        """
         self.rms_norm = RMSNorm()
         self.router = Router()
         self.moe = MoE()
@@ -910,8 +892,6 @@ class DecoderBlock(Layer):
     """Encapsulates one GQA block and one MoE block."""
 
     def __init__(self):
-        """
-        """
         self.gqa_block_layer = GQABlock()
         self.moe_block_layer = MoEBlock()
 
@@ -944,8 +924,6 @@ class Decoder(Layer):
     """Encapsulates the sequential stack of decoder blocks."""
 
     def __init__(self):
-        """
-        """
         self.decoder_blocks = [DecoderBlock() for _ in range(NUM_DECODER_BLOCKS)]
 
     def predict(self, embed_out):
@@ -990,8 +968,6 @@ class Embedding(Layer):
     """Encapsulates token embedding table and lookup."""
 
     def __init__(self):
-        """
-        """
         self.embedding_table = _init_weights(VOCAB_SIZE, HIDDEN_SIZE)
         self.embedding_table_T = [
             [self.embedding_table[r][c] for r in range(VOCAB_SIZE)]
@@ -1123,8 +1099,6 @@ class Model(Layer):
     """Top-level LLM architecture encapsulating embedding, decoder, and LM head."""
 
     def __init__(self):
-        """
-        """
         _rng.seed(42)
         self.embedding = Embedding()
         self.decoder = Decoder()
@@ -1190,8 +1164,6 @@ def pipeline(prompt, tokenizer=None, model=None, max_new_tokens=10):
     return output_text
 
 def main():
-    """
-    """
     # output: str
     output = pipeline("What is 1+1?")
     print(output)
