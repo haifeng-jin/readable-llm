@@ -725,7 +725,6 @@ class Model(Layer):
         embedding=None,
         decoder=None,
         lm_head=None,
-        decoder_blocks=None,
         rng=None,
         seed=42,
     ):
@@ -738,35 +737,16 @@ class Model(Layer):
             if embedding is not None
             else Embedding(rng=rng)
         )
-
-        if decoder is not None:
-            self.decoder = decoder
-        elif decoder_blocks is not None:
-            self.decoder = Decoder(decoder_blocks=decoder_blocks, rng=rng)
-        else:
-            self.decoder = Decoder(rng=rng)
-
+        self.decoder = (
+            decoder
+            if decoder is not None
+            else Decoder(rng=rng)
+        )
         self.lm_head = (
             lm_head
             if lm_head is not None
             else LMHead(embedding_table_T=self.embedding.embedding_table_T, rng=rng)
         )
-
-    @property
-    def embedding_table(self):
-        return self.embedding.embedding_table
-
-    @property
-    def embedding_table_T(self):
-        return self.embedding.embedding_table_T
-
-    @property
-    def decoder_blocks(self):
-        return self.decoder.decoder_blocks
-
-    @property
-    def lm_head_gamma(self):
-        return self.lm_head.gamma
 
     def predict(self, input_ids):
         # input_ids: [seq_len]
