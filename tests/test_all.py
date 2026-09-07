@@ -10,6 +10,7 @@ from readable_llm import (
     NUM_EXPERTS,
     TOP_K,
     INTER_SIZE,
+    init_weights,
     Tokenizer,
     Layer,
     vocab,
@@ -187,6 +188,23 @@ class TestReadableLLM(unittest.TestCase):
         lm_head_layer = LMHead(embedding_layer.embedding_table_T)
         logits = lm_head_layer(decoder_out)
         self.assertEqual(len(logits), VOCAB_SIZE)
+
+    def test_init_weights_helper(self):
+        # 1D vector (normalization scale)
+        vec = init_weights(HIDDEN_SIZE)
+        self.assertEqual(len(vec), HIDDEN_SIZE)
+        self.assertEqual(vec, [1.0] * HIDDEN_SIZE)
+
+        # 2D matrix
+        mat = init_weights(HIDDEN_SIZE, D_HEAD)
+        self.assertEqual(len(mat), HIDDEN_SIZE)
+        self.assertEqual(len(mat[0]), D_HEAD)
+
+        # 3D tensor (query projection across heads)
+        tensor_3d = init_weights(Q_HEADS, HIDDEN_SIZE, D_HEAD)
+        self.assertEqual(len(tensor_3d), Q_HEADS)
+        self.assertEqual(len(tensor_3d[0]), HIDDEN_SIZE)
+        self.assertEqual(len(tensor_3d[0][0]), D_HEAD)
 
     def test_ops(self):
         # matmul

@@ -28,8 +28,29 @@ EPS = 1e-6
 
 _rng = random.Random(42)
 
-def _make_matrix(rows, cols, scale=0.02):
-    return [[_rng.uniform(-scale, scale) for _ in range(cols)] for _ in range(rows)]
+def _init_weights(*shape, val=None, scale=0.02):
+    if len(shape) == 1 and isinstance(shape[0], (list, tuple)):
+        shape = tuple(shape[0])
+
+    if len(shape) == 1:
+        # 1D vector (e.g. normalization scale gamma)
+        fill_val = 1.0 if val is None else val
+        return [fill_val] * shape[0]
+    elif len(shape) == 2:
+        # 2D weight matrix
+        rows, cols = shape
+        return [[_rng.uniform(-scale, scale) for _ in range(cols)] for _ in range(rows)]
+    elif len(shape) == 3:
+        # 3D tensor (e.g. query projection across attention heads)
+        heads, rows, cols = shape
+        return [
+            [[_rng.uniform(-scale, scale) for _ in range(cols)] for _ in range(rows)]
+            for _ in range(heads)
+        ]
+    raise ValueError(f"Unsupported shape: {shape}")
+
+init_weights = _init_weights
+_make_matrix = _init_weights
 
 # ============================== Vocabulary & Tokenizer ==============================
 
@@ -165,7 +186,7 @@ class RMSNorm(Layer):
     """Encapsulates RMS normalization scale weights."""
 
     def __init__(self):
-        self.gamma = [1.0] * HIDDEN_SIZE
+        self.gamma = _init_weights(HIDDEN_SIZE)
 
     def predict(self, tensor_or_vec):
         if isinstance(tensor_or_vec[0], list):
@@ -313,9 +334,9 @@ class Group(Layer):
     """Encapsulates Q, K, and V projection weights for a single attention group."""
 
     def __init__(self):
-        self.w_q = [_make_matrix(HIDDEN_SIZE, D_HEAD) for _ in range(Q_HEADS)]
-        self.w_k = _make_matrix(HIDDEN_SIZE, D_HEAD)
-        self.w_v = _make_matrix(HIDDEN_SIZE, D_HEAD)
+        self.w_q = _init_weights(Q_HEADS, HIDDEN_SIZE, D_HEAD)
+        self.w_k = _init_weights(HIDDEN_SIZE, D_HEAD)
+        self.w_v = _init_weights(HIDDEN_SIZE, D_HEAD)
 
     def predict(self, rms_out):
         return group_0(rms_out, self.w_q, self.w_k, self.w_v)
@@ -361,7 +382,7 @@ class OutMatmul(Layer):
     """Encapsulates output projection matrix for GQA."""
 
     def __init__(self):
-        self.w_matmul = _make_matrix(HIDDEN_SIZE, HIDDEN_SIZE)
+        self.w_matmul = _init_weights(HIDDEN_SIZE, HIDDEN_SIZE)
 
     def predict(self, gqa_out):
         return out_matmul(gqa_out, self.w_matmul)
@@ -424,9 +445,9 @@ class Expert(Layer):
     """Encapsulates SwiGLU projection weights for a single expert."""
 
     def __init__(self):
-        self.w_gate = _make_matrix(HIDDEN_SIZE, INTER_SIZE)
-        self.w_up = _make_matrix(HIDDEN_SIZE, INTER_SIZE)
-        self.w_down = _make_matrix(INTER_SIZE, HIDDEN_SIZE)
+        self.w_gate = _init_weights(HIDDEN_SIZE, INTER_SIZE)
+        self.w_up = _init_weights(HIDDEN_SIZE, INTER_SIZE)
+        self.w_down = _init_weights(INTER_SIZE, HIDDEN_SIZE)
 
     def predict(self, token_vec_or_tensor):
         if isinstance(token_vec_or_tensor[0], list):
@@ -480,7 +501,7 @@ class Router(Layer):
     """Encapsulates routing weights to select top-k experts."""
 
     def __init__(self):
-        self.w_router = _make_matrix(HIDDEN_SIZE, NUM_EXPERTS)
+        self.w_router = _init_weights(HIDDEN_SIZE, NUM_EXPERTS)
 
     def predict(self, rms_out):
         return router(rms_out, self.w_router)
@@ -608,7 +629,7 @@ class Embedding(Layer):
     """Encapsulates token embedding table and lookup."""
 
     def __init__(self):
-        self.embedding_table = _make_matrix(VOCAB_SIZE, HIDDEN_SIZE)
+        self.embedding_table = _init_weights(VOCAB_SIZE, HIDDEN_SIZE)
         self.embedding_table_T = [
             [self.embedding_table[r][c] for r in range(VOCAB_SIZE)]
             for c in range(HIDDEN_SIZE)
@@ -662,11 +683,11 @@ class LMHead(Layer):
     """Encapsulates final RMS normalization and projection to vocabulary logits."""
 
     def __init__(self, embedding_table_T=None):
-        self.gamma = [1.0] * HIDDEN_SIZE
+        self.gamma = _init_weights(HIDDEN_SIZE)
         self.embedding_table_T = (
             embedding_table_T
             if embedding_table_T is not None
-            else _make_matrix(HIDDEN_SIZE, VOCAB_SIZE)
+            else _init_weights(HIDDEN_SIZE, VOCAB_SIZE)
         )
 
     def predict(self, decoder_out):
