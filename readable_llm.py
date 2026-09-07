@@ -1,3 +1,13 @@
+"""readable-llm: The Anatomy of an LLM in a single Python file.
+
+Companion code for the article "The Anatomy of an LLM":
+https://haifengjin.com/the-anatomy-of-an-llm/
+
+Code Organization:
+- Classes organize weights and layer hierarchy for different modules.
+- Standalone functions perform the complex compute and tensor operations.
+"""
+
 import math
 import random
 
