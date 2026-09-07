@@ -271,12 +271,12 @@ def norm_token(token_vec, gamma):
     for v in token_vec:
         sum_of_squares += v ** 2
     # rms: float
-    rms = (sum_of_squares / len(token_vec)) ** 0.5
+    rms = (sum_of_squares / len(token_vec) + EPS) ** 0.5
 
     # output: [hidden_size]
     output = []
     for i in range(len(token_vec)):
-        output.append(token_vec[i] / (rms + EPS) * gamma[i])
+        output.append(token_vec[i] / rms * gamma[i])
     return output
 
 def rms_norm(tensor, gamma):
