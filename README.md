@@ -2,6 +2,21 @@
 
 A clean, educational, and end-to-end runnable implementation of a modern Large Language Model in a single pure Python file, with zero external dependencies.
 
+## What This Project Is (and Isn't)
+
+To set expectations clearly, here is what this project optimizes for and what it deliberately avoids:
+
+- **We are not minimizing lines of code.** This is not a code golf exercise. We favor clear, explicit variable names and step-by-step logic over dense one-liners or clever abstractions.
+- **We are not maximizing runtime performance.** You will not find GPU kernels, C extensions, multithreading, or low-level vectorization here. Everything runs in standard, pure Python.
+- **We are not modeling production inference engines.** Real-world inference systems rely on complex memory paging, continuous batching, and custom hardware kernels. We skip those optimizations to keep the core algorithms transparent and accessible.
+- **We are not explaining mathematical proofs or training theory.** We do not focus on why certain loss functions converge or the mathematical theory behind neural network training.
+
+**What we are optimizing for is readability for software engineers.**
+
+If you are a developer who wants to understand how LLMs actually work on the compute level, this repo is for you. Every matrix multiplication, attention score calculation, RoPE rotation, routing decision, and residual addition is laid bare using standard Python lists and arithmetic. You can step through any line with a debugger, inspect shapes at every intermediate step, and see the exact mechanics of a modern transformer without getting lost in framework magic.
+
+## Overview
+
 This repository implements every tensor operation described in the article **"The Anatomy of an LLM: Every tensor operation explained with code and diagrams"**, covering:
 
 - **Tokenizer**: Subword splitting, integer encoding, and text decoding.
