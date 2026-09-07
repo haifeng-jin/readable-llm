@@ -55,6 +55,7 @@ from readable_llm import (
     lm_head,
     greedy_sampler,
     Model,
+    pipeline,
 )
 
 class TestReadableLLM(unittest.TestCase):
@@ -183,6 +184,12 @@ class TestReadableLLM(unittest.TestCase):
         # Test autoregressive generate
         output_ids = model.generate(input_ids, max_new_tokens=4)
         self.assertEqual(len(output_ids), len(input_ids) + 4)
+
+
+    def test_pipeline(self):
+        output = pipeline("What is 1+1?", max_new_tokens=2)
+        self.assertIsInstance(output, str)
+        self.assertTrue(output.startswith("Whatis 1+1?"))
 
 if __name__ == "__main__":
     unittest.main()

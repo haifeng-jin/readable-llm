@@ -677,38 +677,25 @@ class Model(Layer):
         # input_ids: [total_seq_len]
         return input_ids
 
-# ============================== Demo Entrypoint ==============================
+# ============================== Pipeline & Main ==============================
+
+def pipeline(prompt, tokenizer=None, model=None, max_new_tokens=10):
+    # prompt: str
+    if tokenizer is None:
+        tokenizer = Tokenizer(vocab)
+    if model is None:
+        model = Model()
+    # input_ids: [seq_len]
+    input_ids = tokenizer.encode(prompt)
+    # output_ids: [total_seq_len]
+    output_ids = model.generate(input_ids, max_new_tokens=max_new_tokens)
+    # output_text: str
+    output_text = tokenizer.decode(output_ids)
+    return output_text
 
 def main():
-    print("=" * 60)
-    print("readable-llm: The Anatomy of an LLM in Pure Python")
-    print("=" * 60)
-
-    tokenizer = Tokenizer(vocab)
-    model = Model(seed=42)
-
-    prompt = "What is 1+1?"
-    print(f"\n1. Input Text:\n   {prompt!r}")
-
-    input_ids = tokenizer.encode(prompt)
-    print(f"\n2. Token IDs (seq_len={len(input_ids)}):\n   {input_ids}")
-
-    embed_out = model.embedding(input_ids)
-    print(f"\n3. Embedding Output Shape:\n   [{len(embed_out)}, {len(embed_out[0])}] (seq_len, HIDDEN_SIZE)")
-
-    decoder_out = model.decoder(embed_out)
-    print(f"\n4. Decoder Output Shape:\n   [{len(decoder_out)}, {len(decoder_out[0])}] (seq_len, HIDDEN_SIZE)")
-
-    logits = model.predict(input_ids)
-    print(f"\n5. Model Predict Logits Length:\n   [{len(logits)}] (VOCAB_SIZE)")
-
-    print("\n6. Generating tokens autoregressively...")
-    generated_ids = model.generate(input_ids, max_new_tokens=6)
-    print(f"   Generated Token IDs:\n   {generated_ids}")
-
-    decoded_text = tokenizer.decode(generated_ids)
-    print(f"\n7. Decoded Output Text:\n   {decoded_text!r}")
-    print("\nPipeline finished successfully with zero external dependencies!")
+    output = pipeline("What is 1+1?")
+    print(output)
 
 if __name__ == "__main__":
     main()
