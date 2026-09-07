@@ -595,6 +595,20 @@ def decoder(embed_out, decoder_blocks):
         decoder_out = block(decoder_out)
     return decoder_out
 
+class Decoder(Layer):
+    """Encapsulates the sequential stack of decoder blocks."""
+
+    def __init__(self, decoder_blocks=None, rng=None):
+        # Immediate breakdown: decoder_blocks
+        self.decoder_blocks = (
+            decoder_blocks
+            if decoder_blocks is not None
+            else [DecoderBlock(rng=rng) for _ in range(NUM_DECODER_BLOCKS)]
+        )
+
+    def predict(self, embed_out):
+        return decoder(embed_out, self.decoder_blocks)
+
 # ============================== Embedding & LM Head ==============================
 
 def lookup(token_id, embedding_table):
@@ -610,6 +624,26 @@ def embedding(input_ids, embedding_table):
     # embed_out: [seq_len, hidden_size]
     embed_out = [lookup(token_id, embedding_table) for token_id in input_ids]
     return embed_out
+
+class Embedding(Layer):
+    """Encapsulates token embedding table and lookup."""
+
+    def __init__(self, embedding_table=None, rng=None):
+        if rng is None:
+            rng = random.Random(42)
+        # Immediate breakdown: embedding_table
+        self.embedding_table = (
+            embedding_table
+            if embedding_table is not None
+            else _make_matrix(VOCAB_SIZE, HIDDEN_SIZE, rng=rng)
+        )
+        self.embedding_table_T = [
+            [self.embedding_table[r][c] for r in range(len(self.embedding_table))]
+            for c in range(len(self.embedding_table[0]))
+        ]
+
+    def predict(self, input_ids):
+        return embedding(input_ids, self.embedding_table)
 
 def matmul_token(token_vec, embedding_table_T):
     # token_vec: [hidden_size]
@@ -652,6 +686,25 @@ def lm_head(decoder_out, gamma, embedding_table_T):
     logits = slice_last(all_logits)
     return logits
 
+class LMHead(Layer):
+    """Encapsulates final RMS normalization and projection to vocabulary logits."""
+
+    def __init__(self, gamma=None, embedding_table_T=None, rng=None):
+        if rng is None:
+            rng = random.Random(42)
+        # Immediate breakdown: gamma, embedding_table_T
+        self.gamma = gamma if gamma is not None else [1.0] * HIDDEN_SIZE
+        self.embedding_table_T = (
+            embedding_table_T
+            if embedding_table_T is not None
+            else _make_matrix(HIDDEN_SIZE, VOCAB_SIZE, rng=rng)
+        )
+
+    def predict(self, decoder_out):
+        return lm_head(decoder_out, self.gamma, self.embedding_table_T)
+
+LmHead = LMHead
+
 # ============================== Sampler ==============================
 
 def greedy_sampler(model, input_ids):
@@ -665,43 +718,55 @@ def greedy_sampler(model, input_ids):
 # ============================== Model Class ==============================
 
 class Model(Layer):
-    """Top-level LLM architecture encapsulating embedding, decoder blocks, and LM head."""
+    """Top-level LLM architecture encapsulating embedding, decoder, and LM head."""
 
-    def __init__(self, decoder_blocks=None, rng=None, seed=42):
+    def __init__(
+        self,
+        embedding=None,
+        decoder=None,
+        lm_head=None,
+        decoder_blocks=None,
+        rng=None,
+        seed=42,
+    ):
         if rng is None:
             rng = random.Random(seed)
 
-        # Immediate breakdown: embedding_table, decoder_blocks, lm_head_gamma
-        self.embedding_table = _make_matrix(VOCAB_SIZE, HIDDEN_SIZE, rng=rng)
-
-        # Tied embeddings: transpose of embedding table for lm_head: [HIDDEN_SIZE, VOCAB_SIZE]
-        self.embedding_table_T = [
-            [self.embedding_table[r][c] for r in range(VOCAB_SIZE)]
-            for c in range(HIDDEN_SIZE)
-        ]
-
-        self.decoder_blocks = (
-            decoder_blocks
-            if decoder_blocks is not None
-            else [DecoderBlock(rng=rng) for _ in range(NUM_DECODER_BLOCKS)]
+        # Immediate breakdown: embedding, decoder, lm_head
+        self.embedding = (
+            embedding
+            if embedding is not None
+            else Embedding(rng=rng)
         )
 
-        self.lm_head_gamma = [1.0] * HIDDEN_SIZE
+        if decoder is not None:
+            self.decoder = decoder
+        elif decoder_blocks is not None:
+            self.decoder = Decoder(decoder_blocks=decoder_blocks, rng=rng)
+        else:
+            self.decoder = Decoder(rng=rng)
 
-    def embedding(self, input_ids):
-        # input_ids: [seq_len]
-        # embed_out: [seq_len, HIDDEN_SIZE]
-        return embedding(input_ids, self.embedding_table)
+        self.lm_head = (
+            lm_head
+            if lm_head is not None
+            else LMHead(embedding_table_T=self.embedding.embedding_table_T, rng=rng)
+        )
 
-    def decoder(self, embed_out):
-        # embed_out: [seq_len, HIDDEN_SIZE]
-        # decoder_out: [seq_len, HIDDEN_SIZE]
-        return decoder(embed_out, self.decoder_blocks)
+    @property
+    def embedding_table(self):
+        return self.embedding.embedding_table
 
-    def lm_head(self, decoder_out):
-        # decoder_out: [seq_len, HIDDEN_SIZE]
-        # logits: [VOCAB_SIZE]
-        return lm_head(decoder_out, self.lm_head_gamma, self.embedding_table_T)
+    @property
+    def embedding_table_T(self):
+        return self.embedding.embedding_table_T
+
+    @property
+    def decoder_blocks(self):
+        return self.decoder.decoder_blocks
+
+    @property
+    def lm_head_gamma(self):
+        return self.lm_head.gamma
 
     def predict(self, input_ids):
         # input_ids: [seq_len]

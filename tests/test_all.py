@@ -47,16 +47,21 @@ from readable_llm import (
     decoder_block,
     DecoderBlock,
     decoder,
+    Decoder,
     lookup,
     embedding,
+    Embedding,
     matmul_token,
     logits_matmul,
     slice_last,
     lm_head,
+    LMHead,
+    LmHead,
     greedy_sampler,
     Model,
     pipeline,
 )
+
 
 class TestReadableLLM(unittest.TestCase):
     def test_tokenizer(self):
@@ -69,7 +74,7 @@ class TestReadableLLM(unittest.TestCase):
 
     def test_layer_base_class(self):
         # Verify that all neural network classes inherit from Layer
-        for cls in [Group, GQABlock, Expert, MoEBlock, DecoderBlock, Model]:
+        for cls in [Group, GQABlock, Expert, MoEBlock, DecoderBlock, Decoder, Embedding, LMHead, LmHead, Model]:
             self.assertTrue(issubclass(cls, Layer))
 
     def test_immediate_breakdown_initialization(self):
@@ -103,11 +108,51 @@ class TestReadableLLM(unittest.TestCase):
         self.assertIsInstance(decoder_block_layer.gqa_block_layer, GQABlock)
         self.assertIsInstance(decoder_block_layer.moe_block_layer, MoEBlock)
 
-        # 6. Model initializes DecoderBlock instances
-        model = Model(seed=42)
-        self.assertEqual(len(model.decoder_blocks), NUM_DECODER_BLOCKS)
-        for db in model.decoder_blocks:
+        # 6. Decoder initializes DecoderBlock instances
+        decoder_layer = Decoder()
+        self.assertEqual(len(decoder_layer.decoder_blocks), NUM_DECODER_BLOCKS)
+        for db in decoder_layer.decoder_blocks:
             self.assertIsInstance(db, DecoderBlock)
+
+        # 7. Embedding initializes its embedding table
+        embedding_layer = Embedding()
+        self.assertEqual(len(embedding_layer.embedding_table), VOCAB_SIZE)
+        self.assertEqual(len(embedding_layer.embedding_table[0]), HIDDEN_SIZE)
+        self.assertEqual(len(embedding_layer.embedding_table_T), HIDDEN_SIZE)
+        self.assertEqual(len(embedding_layer.embedding_table_T[0]), VOCAB_SIZE)
+
+        # 8. LMHead initializes gamma and projection weights
+        lm_head_layer = LMHead()
+        self.assertEqual(len(lm_head_layer.gamma), HIDDEN_SIZE)
+        self.assertEqual(len(lm_head_layer.embedding_table_T), HIDDEN_SIZE)
+        self.assertEqual(len(lm_head_layer.embedding_table_T[0]), VOCAB_SIZE)
+
+        # 9. Model initializes Embedding, Decoder, and LMHead instances
+        model = Model(seed=42)
+        self.assertIsInstance(model.embedding, Embedding)
+        self.assertIsInstance(model.decoder, Decoder)
+        self.assertIsInstance(model.lm_head, LMHead)
+
+        # Calling model.embedding, model.decoder, model.lm_head uses their __call__ methods
+        self.assertTrue(callable(model.embedding))
+        self.assertTrue(callable(model.decoder))
+        self.assertTrue(callable(model.lm_head))
+
+    def test_embedding_and_decoder_and_lm_head_layers(self):
+        input_ids = [1867, 318, 352]
+        embedding_layer = Embedding()
+        embed_out = embedding_layer(input_ids)
+        self.assertEqual(len(embed_out), 3)
+        self.assertEqual(len(embed_out[0]), HIDDEN_SIZE)
+
+        decoder_layer = Decoder()
+        decoder_out = decoder_layer(embed_out)
+        self.assertEqual(len(decoder_out), 3)
+        self.assertEqual(len(decoder_out[0]), HIDDEN_SIZE)
+
+        lm_head_layer = LMHead(embedding_table_T=embedding_layer.embedding_table_T)
+        logits = lm_head_layer(decoder_out)
+        self.assertEqual(len(logits), VOCAB_SIZE)
 
     def test_ops(self):
         # matmul
