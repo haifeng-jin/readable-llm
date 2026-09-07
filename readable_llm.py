@@ -161,6 +161,20 @@ def rms_norm(tensor, gamma):
     rms_out = [norm_token(token_vec, gamma) for token_vec in tensor]
     return rms_out
 
+class RMSNorm(Layer):
+    """Encapsulates RMS normalization scale weights."""
+
+    def __init__(self, gamma=None, hidden_size=HIDDEN_SIZE):
+        # Immediate breakdown: gamma
+        self.gamma = gamma if gamma is not None else [1.0] * hidden_size
+
+    def predict(self, tensor_or_vec):
+        if isinstance(tensor_or_vec[0], list):
+            return rms_norm(tensor_or_vec, self.gamma)
+        return norm_token(tensor_or_vec, self.gamma)
+
+RmsNorm = RMSNorm
+
 # ============================== RoPE ==============================
 
 def rope_pair(x0, x1, pos, i, d_head):
@@ -338,6 +352,20 @@ def gqa(rms_out, groups):
         gqa_out.append(row)
     return gqa_out
 
+class GQA(Layer):
+    """Encapsulates grouped-query attention across all groups."""
+
+    def __init__(self, groups=None, rng=None):
+        # Immediate breakdown: groups
+        self.groups = (
+            groups
+            if groups is not None
+            else [Group(rng=rng) for _ in range(NUM_GROUPS)]
+        )
+
+    def predict(self, rms_out):
+        return gqa(rms_out, self.groups)
+
 def out_matmul(gqa_out, w_matmul):
     # gqa_out: [seq_len, hidden_size]
     # w_matmul: [hidden_size, hidden_size]
@@ -345,6 +373,22 @@ def out_matmul(gqa_out, w_matmul):
     # gqa_block_out: [seq_len, hidden_size]
     gqa_block_out = [matmul(token_vec, w_matmul) for token_vec in gqa_out]
     return gqa_block_out
+
+class OutMatmul(Layer):
+    """Encapsulates output projection matrix for GQA."""
+
+    def __init__(self, w_matmul=None, rng=None):
+        if rng is None:
+            rng = random.Random(42)
+        # Immediate breakdown: w_matmul
+        self.w_matmul = (
+            w_matmul
+            if w_matmul is not None
+            else _make_matrix(HIDDEN_SIZE, HIDDEN_SIZE, rng=rng)
+        )
+
+    def predict(self, gqa_out):
+        return out_matmul(gqa_out, self.w_matmul)
 
 def gqa_block(gqa_block_in, rms_norm, gqa, out_matmul):
     # gqa_block_in: [seq_len, hidden_size]
@@ -360,32 +404,34 @@ def gqa_block(gqa_block_in, rms_norm, gqa, out_matmul):
     return gqa_block_out
 
 class GQABlock(Layer):
-    """Encapsulates normalization, groups, and output projection."""
+    """Encapsulates normalization, grouped-query attention, and output projection."""
 
-    def __init__(self, gamma=None, groups=None, w_matmul=None, rng=None):
-        if rng is None:
-            rng = random.Random(42)
-        # Immediate breakdown: gamma, groups, w_matmul
-        self.gamma = gamma if gamma is not None else [1.0] * HIDDEN_SIZE
-        self.groups = (
-            groups
-            if groups is not None
-            else [Group(rng=rng) for _ in range(NUM_GROUPS)]
+    def __init__(
+        self,
+        rms_norm=None,
+        gqa=None,
+        out_matmul=None,
+        rng=None,
+    ):
+        # Immediate breakdown: rms_norm, gqa, out_matmul
+        self.rms_norm = (
+            rms_norm
+            if rms_norm is not None
+            else RMSNorm()
         )
-        self.w_matmul = (
-            w_matmul
-            if w_matmul is not None
-            else _make_matrix(HIDDEN_SIZE, HIDDEN_SIZE, rng=rng)
+        self.gqa = (
+            gqa
+            if gqa is not None
+            else GQA(rng=rng)
+        )
+        self.out_matmul = (
+            out_matmul
+            if out_matmul is not None
+            else OutMatmul(rng=rng)
         )
 
     def predict(self, gqa_block_in):
-        def norm_fn(t):
-            return rms_norm(t, self.gamma)
-        def gqa_fn(r):
-            return gqa(r, self.groups)
-        def out_fn(g):
-            return out_matmul(g, self.w_matmul)
-        return gqa_block(gqa_block_in, norm_fn, gqa_fn, out_fn)
+        return gqa_block(gqa_block_in, self.rms_norm, self.gqa, self.out_matmul)
 
 # ============================== Mixture of Experts (MoE) ==============================
 
@@ -488,6 +534,22 @@ def router(rms_out, w_router):
     top_weights = [route_token(token_vec, w_router) for token_vec in rms_out]
     return top_weights
 
+class Router(Layer):
+    """Encapsulates routing weights to select top-k experts."""
+
+    def __init__(self, w_router=None, rng=None):
+        if rng is None:
+            rng = random.Random(42)
+        # Immediate breakdown: w_router
+        self.w_router = (
+            w_router
+            if w_router is not None
+            else _make_matrix(HIDDEN_SIZE, NUM_EXPERTS, rng=rng)
+        )
+
+    def predict(self, rms_out):
+        return router(rms_out, self.w_router)
+
 def moe_token(token_vec, top_weights, experts):
     # token_vec: [hidden_size]
     # top_weights: [num_experts]
@@ -513,6 +575,20 @@ def moe(rms_out, top_weights, experts):
     ]
     return moe_out
 
+class MoE(Layer):
+    """Encapsulates the collection of experts and weighted aggregation."""
+
+    def __init__(self, experts=None, rng=None):
+        # Immediate breakdown: experts
+        self.experts = (
+            experts
+            if experts is not None
+            else [Expert(rng=rng) for _ in range(NUM_EXPERTS)]
+        )
+
+    def predict(self, rms_out, top_weights):
+        return moe(rms_out, top_weights, self.experts)
+
 def moe_block(moe_in, rms_norm, router, moe):
     # moe_in: [seq_len, hidden_size]
 
@@ -527,32 +603,34 @@ def moe_block(moe_in, rms_norm, router, moe):
     return moe_out
 
 class MoEBlock(Layer):
-    """Encapsulates normalization, routing, and experts."""
+    """Encapsulates normalization, router, and mixture of experts."""
 
-    def __init__(self, gamma=None, w_router=None, experts=None, rng=None):
-        if rng is None:
-            rng = random.Random(42)
-        # Immediate breakdown: gamma, w_router, experts
-        self.gamma = gamma if gamma is not None else [1.0] * HIDDEN_SIZE
-        self.w_router = (
-            w_router
-            if w_router is not None
-            else _make_matrix(HIDDEN_SIZE, NUM_EXPERTS, rng=rng)
+    def __init__(
+        self,
+        rms_norm=None,
+        router=None,
+        moe=None,
+        rng=None,
+    ):
+        # Immediate breakdown: rms_norm, router, moe
+        self.rms_norm = (
+            rms_norm
+            if rms_norm is not None
+            else RMSNorm()
         )
-        self.experts = (
-            experts
-            if experts is not None
-            else [Expert(rng=rng) for _ in range(NUM_EXPERTS)]
+        self.router = (
+            router
+            if router is not None
+            else Router(rng=rng)
+        )
+        self.moe = (
+            moe
+            if moe is not None
+            else MoE(rng=rng)
         )
 
     def predict(self, moe_in):
-        def norm_fn(t):
-            return rms_norm(t, self.gamma)
-        def router_fn(r):
-            return router(r, self.w_router)
-        def moe_fn(r, w):
-            return moe(r, w, self.experts)
-        return moe_block(moe_in, norm_fn, router_fn, moe_fn)
+        return moe_block(moe_in, self.rms_norm, self.router, self.moe)
 
 # ============================== Decoder ==============================
 

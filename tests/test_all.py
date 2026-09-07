@@ -21,6 +21,8 @@ from readable_llm import (
     argmax,
     norm_token,
     rms_norm,
+    RMSNorm,
+    RmsNorm,
     rope_pair,
     rope_token,
     rope_2d,
@@ -32,7 +34,9 @@ from readable_llm import (
     group_0,
     Group,
     gqa,
+    GQA,
     out_matmul,
+    OutMatmul,
     gqa_block,
     GQABlock,
     expert_token,
@@ -40,8 +44,10 @@ from readable_llm import (
     Expert,
     route_token,
     router,
+    Router,
     moe_token,
     moe,
+    MoE,
     moe_block,
     MoEBlock,
     decoder_block,
@@ -74,7 +80,25 @@ class TestReadableLLM(unittest.TestCase):
 
     def test_layer_base_class(self):
         # Verify that all neural network classes inherit from Layer
-        for cls in [Group, GQABlock, Expert, MoEBlock, DecoderBlock, Decoder, Embedding, LMHead, LmHead, Model]:
+        all_layer_classes = [
+            RMSNorm,
+            RmsNorm,
+            Group,
+            GQA,
+            OutMatmul,
+            GQABlock,
+            Expert,
+            Router,
+            MoE,
+            MoEBlock,
+            DecoderBlock,
+            Decoder,
+            Embedding,
+            LMHead,
+            LmHead,
+            Model,
+        ]
+        for cls in all_layer_classes:
             self.assertTrue(issubclass(cls, Layer))
 
     def test_immediate_breakdown_initialization(self):
@@ -85,49 +109,81 @@ class TestReadableLLM(unittest.TestCase):
         self.assertEqual(len(group.w_k), HIDDEN_SIZE)
         self.assertEqual(len(group.w_v), HIDDEN_SIZE)
 
-        # 2. GQABlock initializes Group instances
-        gqa_block_layer = GQABlock()
-        self.assertEqual(len(gqa_block_layer.groups), NUM_GROUPS)
-        for g in gqa_block_layer.groups:
+        # 2. GQA initializes Group instances
+        gqa_layer = GQA()
+        self.assertEqual(len(gqa_layer.groups), NUM_GROUPS)
+        for g in gqa_layer.groups:
             self.assertIsInstance(g, Group)
 
-        # 3. Expert initializes its own projections
+        # 3. OutMatmul initializes w_matmul
+        out_matmul_layer = OutMatmul()
+        self.assertEqual(len(out_matmul_layer.w_matmul), HIDDEN_SIZE)
+        self.assertEqual(len(out_matmul_layer.w_matmul[0]), HIDDEN_SIZE)
+
+        # 4. RMSNorm initializes gamma
+        rms_norm_layer = RMSNorm()
+        self.assertEqual(len(rms_norm_layer.gamma), HIDDEN_SIZE)
+
+        # 5. GQABlock initializes RMSNorm, GQA, and OutMatmul
+        gqa_block_layer = GQABlock()
+        self.assertIsInstance(gqa_block_layer.rms_norm, RMSNorm)
+        self.assertIsInstance(gqa_block_layer.gqa, GQA)
+        self.assertIsInstance(gqa_block_layer.out_matmul, OutMatmul)
+        self.assertTrue(callable(gqa_block_layer.rms_norm))
+        self.assertTrue(callable(gqa_block_layer.gqa))
+        self.assertTrue(callable(gqa_block_layer.out_matmul))
+
+        # 6. Expert initializes its own projections
         expert_layer = Expert()
         self.assertEqual(len(expert_layer.w_gate), HIDDEN_SIZE)
         self.assertEqual(len(expert_layer.w_up), HIDDEN_SIZE)
         self.assertEqual(len(expert_layer.w_down), INTER_SIZE)
 
-        # 4. MoEBlock initializes Expert instances
-        moe_block_layer = MoEBlock()
-        self.assertEqual(len(moe_block_layer.experts), NUM_EXPERTS)
-        for exp in moe_block_layer.experts:
+        # 7. Router initializes w_router
+        router_layer = Router()
+        self.assertEqual(len(router_layer.w_router), HIDDEN_SIZE)
+        self.assertEqual(len(router_layer.w_router[0]), NUM_EXPERTS)
+
+        # 8. MoE initializes Expert instances
+        moe_layer = MoE()
+        self.assertEqual(len(moe_layer.experts), NUM_EXPERTS)
+        for exp in moe_layer.experts:
             self.assertIsInstance(exp, Expert)
 
-        # 5. DecoderBlock initializes GQABlock and MoEBlock
+        # 9. MoEBlock initializes RMSNorm, Router, and MoE
+        moe_block_layer = MoEBlock()
+        self.assertIsInstance(moe_block_layer.rms_norm, RMSNorm)
+        self.assertIsInstance(moe_block_layer.router, Router)
+        self.assertIsInstance(moe_block_layer.moe, MoE)
+        self.assertTrue(callable(moe_block_layer.rms_norm))
+        self.assertTrue(callable(moe_block_layer.router))
+        self.assertTrue(callable(moe_block_layer.moe))
+
+        # 10. DecoderBlock initializes GQABlock and MoEBlock
         decoder_block_layer = DecoderBlock()
         self.assertIsInstance(decoder_block_layer.gqa_block_layer, GQABlock)
         self.assertIsInstance(decoder_block_layer.moe_block_layer, MoEBlock)
 
-        # 6. Decoder initializes DecoderBlock instances
+        # 11. Decoder initializes DecoderBlock instances
         decoder_layer = Decoder()
         self.assertEqual(len(decoder_layer.decoder_blocks), NUM_DECODER_BLOCKS)
         for db in decoder_layer.decoder_blocks:
             self.assertIsInstance(db, DecoderBlock)
 
-        # 7. Embedding initializes its embedding table
+        # 12. Embedding initializes its embedding table
         embedding_layer = Embedding()
         self.assertEqual(len(embedding_layer.embedding_table), VOCAB_SIZE)
         self.assertEqual(len(embedding_layer.embedding_table[0]), HIDDEN_SIZE)
         self.assertEqual(len(embedding_layer.embedding_table_T), HIDDEN_SIZE)
         self.assertEqual(len(embedding_layer.embedding_table_T[0]), VOCAB_SIZE)
 
-        # 8. LMHead initializes gamma and projection weights
+        # 13. LMHead initializes gamma and projection weights
         lm_head_layer = LMHead()
         self.assertEqual(len(lm_head_layer.gamma), HIDDEN_SIZE)
         self.assertEqual(len(lm_head_layer.embedding_table_T), HIDDEN_SIZE)
         self.assertEqual(len(lm_head_layer.embedding_table_T[0]), VOCAB_SIZE)
 
-        # 9. Model initializes Embedding, Decoder, and LMHead instances
+        # 14. Model initializes Embedding, Decoder, and LMHead instances
         model = Model(seed=42)
         self.assertIsInstance(model.embedding, Embedding)
         self.assertIsInstance(model.decoder, Decoder)
@@ -177,11 +233,13 @@ class TestReadableLLM(unittest.TestCase):
         # argmax
         self.assertEqual(argmax([0.1, 0.9, 0.4]), 1)
 
-        # rms_norm
+        # rms_norm function and class
         v = [3.0, 4.0]
         gamma = [1.0, 1.0]
         normed = norm_token(v, gamma)
         self.assertEqual(len(normed), 2)
+        norm_layer = RMSNorm(gamma)
+        self.assertEqual(norm_layer(v), normed)
 
     def test_rope(self):
         x_2d = [[1.0, 2.0], [3.0, 4.0]]
@@ -226,18 +284,27 @@ class TestReadableLLM(unittest.TestCase):
         self.assertEqual(group_layer(dummy_in), g0_out)
 
         groups = [Group(w_q, w_k, w_v) for _ in range(NUM_GROUPS)]
-        gqa_out = gqa(dummy_in, groups)
+        gqa_layer = GQA(groups)
+        gqa_out = gqa_layer(dummy_in)
         self.assertEqual(len(gqa_out), seq_len)
         self.assertEqual(len(gqa_out[0]), HIDDEN_SIZE)
 
         w_matmul = [[0.01] * HIDDEN_SIZE for _ in range(HIDDEN_SIZE)]
-        gqa_block_out = out_matmul(gqa_out, w_matmul)
+        out_matmul_layer = OutMatmul(w_matmul)
+        gqa_block_out = out_matmul_layer(gqa_out)
         self.assertEqual(len(gqa_block_out), seq_len)
         self.assertEqual(len(gqa_block_out[0]), HIDDEN_SIZE)
 
+        # Full GQABlock
+        gqa_block_layer = GQABlock(rms_norm=RMSNorm(), gqa=gqa_layer, out_matmul=out_matmul_layer)
+        block_out = gqa_block_layer(dummy_in)
+        self.assertEqual(len(block_out), seq_len)
+        self.assertEqual(len(block_out[0]), HIDDEN_SIZE)
+
         # MoE
         w_router = [[0.01] * NUM_EXPERTS for _ in range(HIDDEN_SIZE)]
-        top_w = router(dummy_in, w_router)
+        router_layer = Router(w_router)
+        top_w = router_layer(dummy_in)
         self.assertEqual(len(top_w), seq_len)
         self.assertEqual(len(top_w[0]), NUM_EXPERTS)
 
@@ -249,9 +316,16 @@ class TestReadableLLM(unittest.TestCase):
         self.assertEqual(len(single_expert_out), HIDDEN_SIZE)
 
         experts = [Expert(w_gate, w_up, w_down) for _ in range(NUM_EXPERTS)]
-        moe_out = moe(dummy_in, top_w, experts)
+        moe_layer = MoE(experts)
+        moe_out = moe_layer(dummy_in, top_w)
         self.assertEqual(len(moe_out), seq_len)
         self.assertEqual(len(moe_out[0]), HIDDEN_SIZE)
+
+        # Full MoEBlock
+        moe_block_layer = MoEBlock(rms_norm=RMSNorm(), router=router_layer, moe=moe_layer)
+        block_moe_out = moe_block_layer(dummy_in)
+        self.assertEqual(len(block_moe_out), seq_len)
+        self.assertEqual(len(block_moe_out[0]), HIDDEN_SIZE)
 
     def test_model_end_to_end(self):
         # Model initializes with constants directly, zero size arguments
