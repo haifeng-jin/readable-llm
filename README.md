@@ -13,7 +13,7 @@ To set expectations clearly, here is what this project optimizes for and what it
 
 **What we are optimizing for is readability for software engineers.**
 
-If you are a developer who wants to understand how LLMs actually work on the compute level, this repo is for you. Every matrix multiplication, attention score calculation, RoPE rotation, routing decision, and residual addition is laid bare using standard Python lists and arithmetic. You can step through any line with a debugger, inspect shapes at every intermediate step, and see the exact mechanics of a modern transformer without getting lost in framework magic.
+If you are a developer who wants to understand how LLMs actually work on a compute level, this repo is for you. While our code does not reflect how computation happens inside a heavily optimized production engine, it is mathematically equivalent to it. Every matrix multiplication, attention score calculation, RoPE rotation, routing decision, and residual addition is laid bare using standard Python lists and arithmetic. You can step through any line with a debugger, inspect shapes at every intermediate step, and see the exact mechanics of a modern transformer without getting lost in framework magic.
 
 ## Overview
 
