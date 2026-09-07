@@ -1,9 +1,3 @@
-"""readable-llm: The Anatomy of an LLM in a single Python file.
-
-A clean, educational, and end-to-end runnable implementation of a modern
-Large Language Model in pure Python with zero external dependencies.
-"""
-
 import math
 import random
 
@@ -29,24 +23,43 @@ EPS = 1e-6
 _rng = random.Random(42)
 
 def _init_weights(*shape, val=None, scale=0.02):
+    """
+    Args:
+        *shape: tuple of int
+        val: float
+        scale: float
+
+    Returns:
+        list
+    """
     if len(shape) == 1 and isinstance(shape[0], (list, tuple)):
+        # shape: tuple of int
         shape = tuple(shape[0])
 
     if len(shape) == 1:
-        # 1D vector (e.g. normalization scale gamma)
+        # fill_val: float
         fill_val = 1.0 if val is None else val
-        return [fill_val] * shape[0]
+        # weights_1d: [shape[0]]
+        weights_1d = [fill_val] * shape[0]
+        return weights_1d
     elif len(shape) == 2:
-        # 2D weight matrix
+        # rows: int
+        # cols: int
         rows, cols = shape
-        return [[_rng.uniform(-scale, scale) for _ in range(cols)] for _ in range(rows)]
+        # weights_2d: [rows, cols]
+        weights_2d = [[_rng.uniform(-scale, scale) for _ in range(cols)] for _ in range(rows)]
+        return weights_2d
     elif len(shape) == 3:
-        # 3D tensor (e.g. query projection across attention heads)
+        # heads: int
+        # rows: int
+        # cols: int
         heads, rows, cols = shape
-        return [
+        # weights_3d: [heads, rows, cols]
+        weights_3d = [
             [[_rng.uniform(-scale, scale) for _ in range(cols)] for _ in range(rows)]
             for _ in range(heads)
         ]
+        return weights_3d
     raise ValueError(f"Unsupported shape: {shape}")
 
 init_weights = _init_weights
@@ -69,17 +82,27 @@ vocab = {
 }
 
 def split_tokens(text, vocab_dict=vocab):
-    # Chops the input string into individual tokens from vocab
+    """
+    Args:
+        text: str
+        vocab_dict: dict
+
+    Returns:
+        list of str
+    """
+    # tokens: list of str
     tokens = []
+    # i: int
     i = 0
     while i < len(text):
+        # matches: list of str
         matches = [t for t in vocab_dict if text[i:].startswith(t)]
         if matches:
+            # best: str
             best = max(matches, key=len)
             tokens.append(best)
             i += len(best)
         elif text[i] == " ":
-            # Skip unmapped standalone whitespace if not part of a token
             i += 1
         else:
             tokens.append(text[i])
@@ -88,38 +111,91 @@ def split_tokens(text, vocab_dict=vocab):
 
 class Tokenizer:
     def __init__(self, vocab=vocab):
+        """
+        Args:
+            vocab: dict
+        """
         self.vocab = vocab
         self.inv_vocab = {token_id: token for token, token_id in vocab.items()}
 
     def encode(self, text):
+        """
+        Args:
+            text: str
+
+        Returns:
+            [seq_len]
+        """
+        # tokens: list of str
         tokens = split_tokens(text, self.vocab)
         # input_ids: [seq_len]
         input_ids = [self.vocab[token] for token in tokens]
         return input_ids
 
     def decode(self, token_ids):
-        # token_ids: [seq_len]
-        return "".join(self.inv_vocab.get(token_id, f"<{token_id}>") for token_id in token_ids)
+        """
+        Args:
+            token_ids: [seq_len]
+
+        Returns:
+            str
+        """
+        # decoded_str: str
+        decoded_str = "".join(self.inv_vocab.get(token_id, f"<{token_id}>") for token_id in token_ids)
+        return decoded_str
 
 # ============================== Base Neural Network Class ==============================
 
 class Layer:
-    """Base class for all neural network modules.
-    
-    Every layer implements .predict() as its forward pass method.
-    Calling an instance directly delegates to .predict().
-    """
-
-    def predict(self, *args, **kwargs):
-        raise NotImplementedError
+    """Base class for all neural network modules."""
 
     def __call__(self, *args, **kwargs):
+        """
+        Args:
+            *args: tuple
+            **kwargs: dict
+
+        Returns:
+            any
+        """
         return self.predict(*args, **kwargs)
 
-# ============================== Math & Basic Tensor Ops ==============================
+    def predict(self, *args, **kwargs):
+        """
+        Args:
+            *args: tuple
+            **kwargs: dict
+        """
+        raise NotImplementedError
+
+# ============================== Basic Operations ==============================
+
+def softmax(logits):
+    """
+    Args:
+        logits: [n]
+
+    Returns:
+        [n]
+    """
+    # max_val: float
+    max_val = max(logits)
+    # exps: [n]
+    exps = [math.exp(x - max_val) for x in logits]
+    # sum_exps: float
+    sum_exps = sum(exps)
+    # probs: [n]
+    probs = [x / sum_exps for x in exps]
+    return probs
 
 def argmax(logits):
-    # logits: [vocab_size]
+    """
+    Args:
+        logits: [vocab_size]
+
+    Returns:
+        int
+    """
     # max_idx: int
     max_idx = 0
     for i in range(len(logits)):
@@ -127,31 +203,49 @@ def argmax(logits):
             max_idx = i
     return max_idx
 
-def softmax(scores):
-    # Pure Python softmax on a list of numerical scores
-    max_score = max(scores)
-    exp_scores = [math.exp(s - max_score) for s in scores]
-    sum_exp = sum(exp_scores)
-    return [s / sum_exp for s in exp_scores]
-
 def silu(x):
+    """
+    Args:
+        x: float
+
+    Returns:
+        float
+    """
     return x / (1.0 + math.exp(-x))
 
 def matmul(vec, matrix):
-    # vec: [in_dim]
-    # matrix: [in_dim, out_dim]
+    """
+    Args:
+        vec: [in_dim]
+        matrix: [in_dim, out_dim]
+
+    Returns:
+        [out_dim]
+    """
+    # in_dim: int
     in_dim = len(vec)
+    # out_dim: int
     out_dim = len(matrix[0])
+    # output: [out_dim]
     output = []
     for col in range(out_dim):
+        # dot_product: float
         dot_product = sum(vec[k] * matrix[k][col] for k in range(in_dim))
         output.append(dot_product)
     return output
 
 def add(tensor_a, tensor_b):
-    # tensor_a: [seq_len, hidden_size]
-    # tensor_b: [seq_len, hidden_size]
+    """
+    Args:
+        tensor_a: [seq_len, hidden_size]
+        tensor_b: [seq_len, hidden_size]
+
+    Returns:
+        [seq_len, hidden_size]
+    """
+    # seq_len: int
     seq_len = len(tensor_a)
+    # hidden_size: int
     hidden_size = len(tensor_a[0])
 
     # output: [seq_len, hidden_size]
@@ -164,10 +258,19 @@ def add(tensor_a, tensor_b):
 # ============================== RMSNorm ==============================
 
 def norm_token(token_vec, gamma):
-    # token_vec: [hidden_size]
+    """
+    Args:
+        token_vec: [hidden_size]
+        gamma: [hidden_size]
+
+    Returns:
+        [hidden_size]
+    """
+    # sum_of_squares: float
     sum_of_squares = 0.0
     for v in token_vec:
         sum_of_squares += v ** 2
+    # rms: float
     rms = (sum_of_squares / len(token_vec)) ** 0.5
 
     # output: [hidden_size]
@@ -177,7 +280,14 @@ def norm_token(token_vec, gamma):
     return output
 
 def rms_norm(tensor, gamma):
-    # tensor: [seq_len, hidden_size]
+    """
+    Args:
+        tensor: [seq_len, hidden_size]
+        gamma: [hidden_size]
+
+    Returns:
+        [seq_len, hidden_size]
+    """
     # rms_out: [seq_len, hidden_size]
     rms_out = [norm_token(token_vec, gamma) for token_vec in tensor]
     return rms_out
@@ -186,9 +296,18 @@ class RMSNorm(Layer):
     """Encapsulates RMS normalization scale weights."""
 
     def __init__(self):
+        """
+        """
         self.gamma = _init_weights(HIDDEN_SIZE)
 
     def predict(self, tensor_or_vec):
+        """
+        Args:
+            tensor_or_vec: [seq_len, hidden_size] or [hidden_size]
+
+        Returns:
+            [seq_len, hidden_size] or [hidden_size]
+        """
         if isinstance(tensor_or_vec[0], list):
             return rms_norm(tensor_or_vec, self.gamma)
         return norm_token(tensor_or_vec, self.gamma)
@@ -198,38 +317,80 @@ RmsNorm = RMSNorm
 # ============================== RoPE ==============================
 
 def rope_pair(x0, x1, pos, i, d_head):
-    # The variables in this function are all scalars.
+    """
+    Args:
+        x0: float
+        x1: float
+        pos: int
+        i: int
+        d_head: int
+
+    Returns:
+        (float, float)
+    """
+    # freq: float
     freq = 1.0 / (10000 ** (i / d_head))
+    # angle: float
     angle = pos * freq
+    # cos_val: float
     cos_val = math.cos(angle)
+    # sin_val: float
     sin_val = math.sin(angle)
     return x0 * cos_val - x1 * sin_val, x0 * sin_val + x1 * cos_val
 
 def rope_token(token_vec, pos):
-    # token_vec: [d_head]
-    # pos: scalar
+    """
+    Args:
+        token_vec: [d_head]
+        pos: int
+
+    Returns:
+        [d_head]
+    """
+    # d_head: int
     d_head = len(token_vec)
     # output: [d_head]
     output = []
-    # Iterate over consecutive coordinate pairs: (x0, x1), (x2, x3), ...
     for i in range(0, d_head, 2):
+        # r0: float
+        # r1: float
         r0, r1 = rope_pair(token_vec[i], token_vec[i + 1], pos, i, d_head)
         output.append(r0)
         output.append(r1)
     return output
 
 def rope_2d(x):
-    # x: [seq_len, d_head]
-    # return: [seq_len, d_head]
-    return [rope_token(token_vec, pos) for pos, token_vec in enumerate(x)]
+    """
+    Args:
+        x: [seq_len, d_head]
+
+    Returns:
+        [seq_len, d_head]
+    """
+    # output: [seq_len, d_head]
+    output = [rope_token(token_vec, pos) for pos, token_vec in enumerate(x)]
+    return output
 
 def rope_3d(x):
-    # x: [q_heads, seq_len, d_head]
-    # return: [q_heads, seq_len, d_head]
-    return [rope_2d(head) for head in x]
+    """
+    Args:
+        x: [q_heads, seq_len, d_head]
+
+    Returns:
+        [q_heads, seq_len, d_head]
+    """
+    # output: [q_heads, seq_len, d_head]
+    output = [rope_2d(head) for head in x]
+    return output
 
 def rope(x):
-    # x: [seq_len, d_head] or [q_heads, seq_len, d_head]
+    """
+    Args:
+        x: [seq_len, d_head] or [q_heads, seq_len, d_head]
+
+    Returns:
+        [seq_len, d_head] or [q_heads, seq_len, d_head]
+    """
     if isinstance(x[0][0], list):
         return rope_3d(x)
     return rope_2d(x)
@@ -237,36 +398,54 @@ def rope(x):
 # ============================== Attention ==============================
 
 def attention_token(q_token, k_T, v, i):
-    # q_token: [d_head]
-    # k_T: [d_head, seq_len]
-    # v: [seq_len, d_head]
+    """
+    Args:
+        q_token: [d_head]
+        k_T: [d_head, seq_len]
+        v: [seq_len, d_head]
+        i: int
+
+    Returns:
+        [d_head]
+    """
+    # d_head: int
     d_head = len(q_token)
-    seq_len = len(v)
 
-    # Compute raw dot products against all keys: [seq_len]
-    dot_products = matmul(q_token, k_T)
+    # raw_scores: [seq_len]
+    raw_scores = matmul(q_token, k_T)
 
-    # Scale scores up to the current token position i: [i + 1]
-    scores = []
-    for j in range(i + 1):
-        scores.append(dot_products[j] / math.sqrt(d_head))
+    # scaled_scores: [seq_len]
+    scaled_scores = [s / (d_head ** 0.5) for s in raw_scores]
+
+    # masked_scores: [i + 1]
+    masked_scores = [scaled_scores[j] for j in range(i + 1)]
+
+    # weights: [i + 1]
+    weights = softmax(masked_scores)
 
     # weights: [seq_len]
-    # Pad zeros for future tokens to make length [seq_len]
-    weights = list(softmax(scores)) + [0.0] * (seq_len - (i + 1))
+    weights = weights + [0.0] * (len(raw_scores) - len(weights))
 
-    # Compute weighted sum of values: [d_head]
+    # token_out: [d_head]
     token_out = matmul(weights, v)
     return token_out
 
 def single_attention_head(single_q, k, v):
-    # single_q: [seq_len, d_head]
-    # k: [seq_len, d_head]
-    # v: [seq_len, d_head]
+    """
+    Args:
+        single_q: [seq_len, d_head]
+        k: [seq_len, d_head]
+        v: [seq_len, d_head]
+
+    Returns:
+        [seq_len, d_head]
+    """
+    # seq_len: int
     seq_len = len(k)
+    # d_head: int
     d_head = len(k[0])
 
-    # Transpose k to compute dot products with q: [d_head, seq_len]
+    # k_T: [d_head, seq_len]
     k_T = [[k[row][col] for row in range(seq_len)] for col in range(d_head)]
 
     # head_out: [seq_len, d_head]
@@ -278,54 +457,58 @@ def single_attention_head(single_q, k, v):
     return head_out
 
 def attention_head(q, k, v):
-    # q: [q_heads, seq_len, d_head]
-    # k: [seq_len, d_head]
-    # v: [seq_len, d_head]
+    """
+    Args:
+        q: [q_heads, seq_len, d_head]
+        k: [seq_len, d_head]
+        v: [seq_len, d_head]
+
+    Returns:
+        [seq_len, head_dim]
+    """
+    # q_heads: int
+    q_heads = len(q)
+    # seq_len: int
     seq_len = len(k)
 
-    # Compute attention for each query head
     # head_outs: [q_heads, seq_len, d_head]
-    head_outs = []
-    for single_q in q:
-        # head_out: [seq_len, d_head]
-        head_out = single_attention_head(single_q, k, v)
-        head_outs.append(head_out)
+    head_outs = [single_attention_head(single_q, k, v) for single_q in q]
 
-    # Concatenate all head outputs
-    # out: [seq_len, head_dim]
-    out = []
+    # group_out: [seq_len, head_dim]
+    group_out = []
     for t in range(seq_len):
-        # token_out: [head_dim]
-        # head_dim == q_heads * d_head
-        token_out = []
-        for head_out in head_outs:
-            # head_out: [seq_len, d_head]
-            token_out.extend(head_out[t])
-        out.append(token_out)
-    return out
+        # row: [head_dim]
+        row = []
+        for h in range(q_heads):
+            row.extend(head_outs[h][t])
+        group_out.append(row)
+    return group_out
 
 # ============================== Grouped-Query Attention (GQA) ==============================
 
 def group_0(rms_out, w_q, w_k, w_v):
-    # rms_out: [seq_len, hidden_size]
-    # w_q: [q_heads, hidden_size, d_head]
-    # w_k: [hidden_size, d_head]
-    # w_v: [hidden_size, d_head]
+    """
+    Args:
+        rms_out: [seq_len, hidden_size]
+        w_q: [q_heads, hidden_size, d_head]
+        w_k: [hidden_size, d_head]
+        w_v: [hidden_size, d_head]
 
-    # Project inputs to q, k, v token-wise using our matmul helper
+    Returns:
+        [seq_len, head_dim]
+    """
     # q: [q_heads, seq_len, d_head]
-    # k: [seq_len, d_head]
-    # v: [seq_len, d_head]
     q = [[matmul(token_vec, w) for token_vec in rms_out] for w in w_q]
+    # k: [seq_len, d_head]
     k = [matmul(token_vec, w_k) for token_vec in rms_out]
+    # v: [seq_len, d_head]
     v = [matmul(token_vec, w_v) for token_vec in rms_out]
 
-    # Encode positions with rotary embedding
-    # rope is token-wise and preserves tensor shape
+    # q: [q_heads, seq_len, d_head]
     q = rope(q)
+    # k: [seq_len, d_head]
     k = rope(k)
 
-    # Compute multi-head attention and concatenate heads
     # group_0_out: [seq_len, head_dim]
     group_0_out = attention_head(q, k, v)
     return group_0_out
@@ -334,28 +517,42 @@ class Group(Layer):
     """Encapsulates Q, K, and V projection weights for a single attention group."""
 
     def __init__(self):
+        """
+        """
         self.w_q = _init_weights(Q_HEADS, HIDDEN_SIZE, D_HEAD)
         self.w_k = _init_weights(HIDDEN_SIZE, D_HEAD)
         self.w_v = _init_weights(HIDDEN_SIZE, D_HEAD)
 
     def predict(self, rms_out):
+        """
+        Args:
+            rms_out: [seq_len, hidden_size]
+
+        Returns:
+            [seq_len, head_dim]
+        """
         return group_0(rms_out, self.w_q, self.w_k, self.w_v)
 
 def gqa(rms_out, groups):
-    # rms_out: [seq_len, hidden_size]
+    """
+    Args:
+        rms_out: [seq_len, hidden_size]
+        groups: list of Group
+
+    Returns:
+        [seq_len, hidden_size]
+    """
+    # seq_len: int
     seq_len = len(rms_out)
 
-    # Each group computes attention on the full rms_out input
-    # group_out: [seq_len, head_dim]
+    # group_outs: [num_groups, seq_len, head_dim]
     group_outs = [group(rms_out) for group in groups]
 
-    # Concatenate group outputs back along the column dimension
     # gqa_out: [seq_len, hidden_size]
     gqa_out = []
-    # Iterate over the rows of gqa_out
     for t in range(seq_len):
+        # row: [hidden_size]
         row = []
-        # Iterate the groups to concat the outputs
         for out in group_outs:
             row.extend(out[t])
         gqa_out.append(row)
@@ -365,15 +562,29 @@ class GQA(Layer):
     """Encapsulates grouped-query attention across all groups."""
 
     def __init__(self):
+        """
+        """
         self.groups = [Group() for _ in range(NUM_GROUPS)]
 
     def predict(self, rms_out):
+        """
+        Args:
+            rms_out: [seq_len, hidden_size]
+
+        Returns:
+            [seq_len, hidden_size]
+        """
         return gqa(rms_out, self.groups)
 
 def out_matmul(gqa_out, w_matmul):
-    # gqa_out: [seq_len, hidden_size]
-    # w_matmul: [hidden_size, hidden_size]
+    """
+    Args:
+        gqa_out: [seq_len, hidden_size]
+        w_matmul: [hidden_size, hidden_size]
 
+    Returns:
+        [seq_len, hidden_size]
+    """
     # gqa_block_out: [seq_len, hidden_size]
     gqa_block_out = [matmul(token_vec, w_matmul) for token_vec in gqa_out]
     return gqa_block_out
@@ -382,14 +593,31 @@ class OutMatmul(Layer):
     """Encapsulates output projection matrix for GQA."""
 
     def __init__(self):
+        """
+        """
         self.w_matmul = _init_weights(HIDDEN_SIZE, HIDDEN_SIZE)
 
     def predict(self, gqa_out):
+        """
+        Args:
+            gqa_out: [seq_len, hidden_size]
+
+        Returns:
+            [seq_len, hidden_size]
+        """
         return out_matmul(gqa_out, self.w_matmul)
 
 def gqa_block(gqa_block_in, rms_norm, gqa, out_matmul):
-    # gqa_block_in: [seq_len, hidden_size]
+    """
+    Args:
+        gqa_block_in: [seq_len, hidden_size]
+        rms_norm: RMSNorm
+        gqa: GQA
+        out_matmul: OutMatmul
 
+    Returns:
+        [seq_len, hidden_size]
+    """
     # rms_out: [seq_len, hidden_size]
     rms_out = rms_norm(gqa_block_in)
 
@@ -404,20 +632,35 @@ class GQABlock(Layer):
     """Encapsulates normalization, grouped-query attention, and output projection."""
 
     def __init__(self):
+        """
+        """
         self.rms_norm = RMSNorm()
         self.gqa = GQA()
         self.out_matmul = OutMatmul()
 
     def predict(self, gqa_block_in):
+        """
+        Args:
+            gqa_block_in: [seq_len, hidden_size]
+
+        Returns:
+            [seq_len, hidden_size]
+        """
         return gqa_block(gqa_block_in, self.rms_norm, self.gqa, self.out_matmul)
 
 # ============================== Mixture of Experts (MoE) ==============================
 
 def expert_token(token_vec, w_gate, w_up, w_down):
-    # token_vec: [hidden_size]
-    # w_gate, w_up: [hidden_size, inter_size]
-    # w_down: [inter_size, hidden_size]
+    """
+    Args:
+        token_vec: [hidden_size]
+        w_gate: [hidden_size, inter_size]
+        w_up: [hidden_size, inter_size]
+        w_down: [inter_size, hidden_size]
 
+    Returns:
+        [hidden_size]
+    """
     # x_gate: [inter_size]
     x_gate = matmul(token_vec, w_gate)
 
@@ -427,8 +670,9 @@ def expert_token(token_vec, w_gate, w_up, w_down):
     # x_act: [inter_size]
     x_act = [silu(x) for x in x_gate]
 
-    # x_inter: [inter_size]
+    # inter_size: int
     inter_size = len(x_act)
+    # x_inter: [inter_size]
     x_inter = [x_act[i] * x_up[i] for i in range(inter_size)]
 
     # x_down: [hidden_size]
@@ -436,7 +680,16 @@ def expert_token(token_vec, w_gate, w_up, w_down):
     return x_down
 
 def expert(tensor, w_gate, w_up, w_down):
-    # tensor: [seq_len, hidden_size]
+    """
+    Args:
+        tensor: [seq_len, hidden_size]
+        w_gate: [hidden_size, inter_size]
+        w_up: [hidden_size, inter_size]
+        w_down: [inter_size, hidden_size]
+
+    Returns:
+        [seq_len, hidden_size]
+    """
     # output: [seq_len, hidden_size]
     output = [expert_token(token_vec, w_gate, w_up, w_down) for token_vec in tensor]
     return output
@@ -445,54 +698,69 @@ class Expert(Layer):
     """Encapsulates SwiGLU projection weights for a single expert."""
 
     def __init__(self):
+        """
+        """
         self.w_gate = _init_weights(HIDDEN_SIZE, INTER_SIZE)
         self.w_up = _init_weights(HIDDEN_SIZE, INTER_SIZE)
         self.w_down = _init_weights(INTER_SIZE, HIDDEN_SIZE)
 
     def predict(self, token_vec_or_tensor):
+        """
+        Args:
+            token_vec_or_tensor: [seq_len, hidden_size] or [hidden_size]
+
+        Returns:
+            [seq_len, hidden_size] or [hidden_size]
+        """
         if isinstance(token_vec_or_tensor[0], list):
             return expert(token_vec_or_tensor, self.w_gate, self.w_up, self.w_down)
         return expert_token(token_vec_or_tensor, self.w_gate, self.w_up, self.w_down)
 
 def route_token(token_vec, w_router):
-    # token_vec: [hidden_size]
-    # w_router:  [hidden_size, num_experts]
+    """
+    Args:
+        token_vec: [hidden_size]
+        w_router: [hidden_size, num_experts]
 
+    Returns:
+        [num_experts]
+    """
     # logits: [num_experts]
-    # example value: [1.2, 1.6, 0.3]
     logits = matmul(token_vec, w_router)
 
+    # num_experts: int
     num_experts = len(logits)
 
     # indices: [num_experts]
-    # example value: [0, 1, 2]
     indices = [i for i in range(num_experts)]
 
     # sorted_indices: [num_experts]
-    # example value: [1, 0, 2]
     sorted_indices = sorted(indices, key=lambda i: logits[i], reverse=True)
 
-    # top_indices: [TOP_K]
-    # example value: [1, 0]
+    # top_indices: [top_k]
     top_indices = sorted_indices[:TOP_K]
 
-    # top_logits: [TOP_K]
-    # example value: [1.6, 1.2]
+    # top_logits: [top_k]
     top_logits = [logits[i] for i in top_indices]
 
-    # top_probs: [TOP_K]
-    # example value: [0.6, 0.4]
+    # top_probs: [top_k]
     top_probs = softmax(top_logits)
 
     # top_weights: [num_experts]
-    # example value: [0.4, 0.6, 0]
     top_weights = [0.0] * num_experts
     for k in range(TOP_K):
         top_weights[top_indices[k]] = top_probs[k]
     return top_weights
 
 def router(rms_out, w_router):
-    # rms_out: [seq_len, hidden_size]
+    """
+    Args:
+        rms_out: [seq_len, hidden_size]
+        w_router: [hidden_size, num_experts]
+
+    Returns:
+        [seq_len, num_experts]
+    """
     # top_weights: [seq_len, num_experts]
     top_weights = [route_token(token_vec, w_router) for token_vec in rms_out]
     return top_weights
@@ -501,14 +769,31 @@ class Router(Layer):
     """Encapsulates routing weights to select top-k experts."""
 
     def __init__(self):
+        """
+        """
         self.w_router = _init_weights(HIDDEN_SIZE, NUM_EXPERTS)
 
     def predict(self, rms_out):
+        """
+        Args:
+            rms_out: [seq_len, hidden_size]
+
+        Returns:
+            [seq_len, num_experts]
+        """
         return router(rms_out, self.w_router)
 
 def moe_token(token_vec, top_weights, experts):
-    # token_vec: [hidden_size]
-    # top_weights: [num_experts]
+    """
+    Args:
+        token_vec: [hidden_size]
+        top_weights: [num_experts]
+        experts: list of Expert
+
+    Returns:
+        [hidden_size]
+    """
+    # hidden_size: int
     hidden_size = len(token_vec)
 
     # moe_out: [hidden_size]
@@ -521,9 +806,15 @@ def moe_token(token_vec, top_weights, experts):
     return moe_out
 
 def moe(rms_out, top_weights, experts):
-    # rms_out: [seq_len, hidden_size]
-    # top_weights: [seq_len, num_experts]
+    """
+    Args:
+        rms_out: [seq_len, hidden_size]
+        top_weights: [seq_len, num_experts]
+        experts: list of Expert
 
+    Returns:
+        [seq_len, hidden_size]
+    """
     # moe_out: [seq_len, hidden_size]
     moe_out = [
         moe_token(token_vec, weights, experts)
@@ -535,14 +826,32 @@ class MoE(Layer):
     """Encapsulates the collection of experts and weighted aggregation."""
 
     def __init__(self):
+        """
+        """
         self.experts = [Expert() for _ in range(NUM_EXPERTS)]
 
     def predict(self, rms_out, top_weights):
+        """
+        Args:
+            rms_out: [seq_len, hidden_size]
+            top_weights: [seq_len, num_experts]
+
+        Returns:
+            [seq_len, hidden_size]
+        """
         return moe(rms_out, top_weights, self.experts)
 
 def moe_block(moe_in, rms_norm, router, moe):
-    # moe_in: [seq_len, hidden_size]
+    """
+    Args:
+        moe_in: [seq_len, hidden_size]
+        rms_norm: RMSNorm
+        router: Router
+        moe: MoE
 
+    Returns:
+        [seq_len, hidden_size]
+    """
     # rms_out: [seq_len, hidden_size]
     rms_out = rms_norm(moe_in)
 
@@ -557,20 +866,37 @@ class MoEBlock(Layer):
     """Encapsulates normalization, router, and mixture of experts."""
 
     def __init__(self):
+        """
+        """
         self.rms_norm = RMSNorm()
         self.router = Router()
         self.moe = MoE()
 
     def predict(self, moe_in):
+        """
+        Args:
+            moe_in: [seq_len, hidden_size]
+
+        Returns:
+            [seq_len, hidden_size]
+        """
         return moe_block(moe_in, self.rms_norm, self.router, self.moe)
 
 # ============================== Decoder ==============================
 
 def decoder_block(decoder_in, gqa_block, moe_block):
-    # decoder_in: [seq_len, hidden_size]
+    """
+    Args:
+        decoder_in: [seq_len, hidden_size]
+        gqa_block: GQABlock
+        moe_block: MoEBlock
 
+    Returns:
+        [seq_len, hidden_size]
+    """
     # gqa_out: [seq_len, hidden_size]
     gqa_out = gqa_block(decoder_in)
+    # residual_1: [seq_len, hidden_size]
     residual_1 = add(decoder_in, gqa_out)
 
     # moe_out: [seq_len, hidden_size]
@@ -584,16 +910,30 @@ class DecoderBlock(Layer):
     """Encapsulates one GQA block and one MoE block."""
 
     def __init__(self):
+        """
+        """
         self.gqa_block_layer = GQABlock()
         self.moe_block_layer = MoEBlock()
 
     def predict(self, decoder_in):
+        """
+        Args:
+            decoder_in: [seq_len, hidden_size]
+
+        Returns:
+            [seq_len, hidden_size]
+        """
         return decoder_block(decoder_in, self.gqa_block_layer, self.moe_block_layer)
 
 def decoder(embed_out, decoder_blocks):
-    # embed_out: [seq_len, hidden_size]
-    # decoder_blocks: list of decoder_block layers
+    """
+    Args:
+        embed_out: [seq_len, hidden_size]
+        decoder_blocks: list of DecoderBlock
 
+    Returns:
+        [seq_len, hidden_size]
+    """
     # decoder_out: [seq_len, hidden_size]
     decoder_out = embed_out
     for block in decoder_blocks:
@@ -604,23 +944,44 @@ class Decoder(Layer):
     """Encapsulates the sequential stack of decoder blocks."""
 
     def __init__(self):
+        """
+        """
         self.decoder_blocks = [DecoderBlock() for _ in range(NUM_DECODER_BLOCKS)]
 
     def predict(self, embed_out):
+        """
+        Args:
+            embed_out: [seq_len, hidden_size]
+
+        Returns:
+            [seq_len, hidden_size]
+        """
         return decoder(embed_out, self.decoder_blocks)
 
 # ============================== Embedding & LM Head ==============================
 
 def lookup(token_id, embedding_table):
-    # token_id: int
-    # embedding_table: [vocab_size, hidden_size]
+    """
+    Args:
+        token_id: int
+        embedding_table: [vocab_size, hidden_size]
+
+    Returns:
+        [hidden_size]
+    """
     # token_vec: [hidden_size]
     token_vec = embedding_table[token_id]
     return token_vec
 
 def embedding(input_ids, embedding_table):
-    # input_ids: [seq_len]
-    # embedding_table: [vocab_size, hidden_size]
+    """
+    Args:
+        input_ids: [seq_len]
+        embedding_table: [vocab_size, hidden_size]
+
+    Returns:
+        [seq_len, hidden_size]
+    """
     # embed_out: [seq_len, hidden_size]
     embed_out = [lookup(token_id, embedding_table) for token_id in input_ids]
     return embed_out
@@ -629,6 +990,8 @@ class Embedding(Layer):
     """Encapsulates token embedding table and lookup."""
 
     def __init__(self):
+        """
+        """
         self.embedding_table = _init_weights(VOCAB_SIZE, HIDDEN_SIZE)
         self.embedding_table_T = [
             [self.embedding_table[r][c] for r in range(VOCAB_SIZE)]
@@ -636,41 +999,72 @@ class Embedding(Layer):
         ]
 
     def predict(self, input_ids):
+        """
+        Args:
+            input_ids: [seq_len]
+
+        Returns:
+            [seq_len, hidden_size]
+        """
         return embedding(input_ids, self.embedding_table)
 
 def matmul_token(token_vec, embedding_table_T):
-    # token_vec: [hidden_size]
-    # embedding_table_T: [hidden_size, vocab_size]
-    # This function is just a standard matmul.
+    """
+    Args:
+        token_vec: [hidden_size]
+        embedding_table_T: [hidden_size, vocab_size]
+
+    Returns:
+        [vocab_size]
+    """
+    # vocab_size: int
     vocab_size = len(embedding_table_T[0])
+    # hidden_size: int
     hidden_size = len(token_vec)
 
     # logits: [vocab_size]
     logits = []
     for col in range(vocab_size):
+        # dot_product: float
         dot_product = sum(token_vec[k] * embedding_table_T[k][col] for k in range(hidden_size))
         logits.append(dot_product)
     return logits
 
 def logits_matmul(rms_out, embedding_table_T):
-    # rms_out: [seq_len, hidden_size]
-    # embedding_table_T: [hidden_size, vocab_size]
+    """
+    Args:
+        rms_out: [seq_len, hidden_size]
+        embedding_table_T: [hidden_size, vocab_size]
 
+    Returns:
+        [seq_len, vocab_size]
+    """
     # all_logits: [seq_len, vocab_size]
     all_logits = [matmul_token(token_vec, embedding_table_T) for token_vec in rms_out]
     return all_logits
 
 def slice_last(all_logits):
-    # all_logits: [seq_len, vocab_size]
+    """
+    Args:
+        all_logits: [seq_len, vocab_size]
+
+    Returns:
+        [vocab_size]
+    """
     # logits: [vocab_size]
     logits = all_logits[-1]
     return logits
 
 def lm_head(decoder_out, gamma, embedding_table_T):
-    # decoder_out: [seq_len, hidden_size]
-    # gamma: [hidden_size]
-    # embedding_table_T: [hidden_size, vocab_size]
+    """
+    Args:
+        decoder_out: [seq_len, hidden_size]
+        gamma: [hidden_size]
+        embedding_table_T: [hidden_size, vocab_size]
 
+    Returns:
+        [vocab_size]
+    """
     # rms_out: [seq_len, hidden_size]
     rms_out = rms_norm(decoder_out, gamma)
     # all_logits: [seq_len, vocab_size]
@@ -683,6 +1077,10 @@ class LMHead(Layer):
     """Encapsulates final RMS normalization and projection to vocabulary logits."""
 
     def __init__(self, embedding_table_T=None):
+        """
+        Args:
+            embedding_table_T: [hidden_size, vocab_size]
+        """
         self.gamma = _init_weights(HIDDEN_SIZE)
         self.embedding_table_T = (
             embedding_table_T
@@ -691,6 +1089,13 @@ class LMHead(Layer):
         )
 
     def predict(self, decoder_out):
+        """
+        Args:
+            decoder_out: [seq_len, hidden_size]
+
+        Returns:
+            [vocab_size]
+        """
         return lm_head(decoder_out, self.gamma, self.embedding_table_T)
 
 LmHead = LMHead
@@ -698,7 +1103,14 @@ LmHead = LMHead
 # ============================== Sampler ==============================
 
 def greedy_sampler(model, input_ids):
-    # input_ids: [seq_len]
+    """
+    Args:
+        model: Model
+        input_ids: [seq_len]
+
+    Returns:
+        int
+    """
     # logits: [vocab_size]
     logits = model.predict(input_ids)
     # next_token_id: int
@@ -711,23 +1123,38 @@ class Model(Layer):
     """Top-level LLM architecture encapsulating embedding, decoder, and LM head."""
 
     def __init__(self):
+        """
+        """
         _rng.seed(42)
         self.embedding = Embedding()
         self.decoder = Decoder()
         self.lm_head = LMHead(self.embedding.embedding_table_T)
 
     def predict(self, input_ids):
-        # input_ids: [seq_len]
-        # embed_out: [seq_len, HIDDEN_SIZE]
+        """
+        Args:
+            input_ids: [seq_len]
+
+        Returns:
+            [vocab_size]
+        """
+        # embed_out: [seq_len, hidden_size]
         embed_out = self.embedding(input_ids)
-        # decoder_out: [seq_len, HIDDEN_SIZE]
+        # decoder_out: [seq_len, hidden_size]
         decoder_out = self.decoder(embed_out)
-        # logits: [VOCAB_SIZE]
+        # logits: [vocab_size]
         logits = self.lm_head(decoder_out)
         return logits
 
     def generate(self, input_ids, max_new_tokens=MAX_NEW_TOKENS):
-        # input_ids: [seq_len]
+        """
+        Args:
+            input_ids: [seq_len]
+            max_new_tokens: int
+
+        Returns:
+            [total_seq_len]
+        """
         for _ in range(max_new_tokens):
             # next_token_id: int
             next_token_id = greedy_sampler(self, input_ids)
@@ -735,13 +1162,21 @@ class Model(Layer):
             input_ids = input_ids + [next_token_id]
             if next_token_id == EOS_TOKEN_ID:
                 break
-        # input_ids: [total_seq_len]
         return input_ids
 
 # ============================== Pipeline & Main ==============================
 
 def pipeline(prompt, tokenizer=None, model=None, max_new_tokens=10):
-    # prompt: str
+    """
+    Args:
+        prompt: str
+        tokenizer: Tokenizer
+        model: Model
+        max_new_tokens: int
+
+    Returns:
+        str
+    """
     if tokenizer is None:
         tokenizer = Tokenizer()
     if model is None:
@@ -755,6 +1190,9 @@ def pipeline(prompt, tokenizer=None, model=None, max_new_tokens=10):
     return output_text
 
 def main():
+    """
+    """
+    # output: str
     output = pipeline("What is 1+1?")
     print(output)
 
