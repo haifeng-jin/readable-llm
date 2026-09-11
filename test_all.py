@@ -30,7 +30,7 @@ from readable_llm import (
     rope_3d,
     rope,
     attention_token,
-    single_attention_head,
+    dot_product_attention,
     attention_head,
     group_0,
     Group,
@@ -250,15 +250,15 @@ class TestReadableLLM(unittest.TestCase):
 
     def test_attention(self):
         seq_len = 3
-        single_q = [[1.0, 0.0] for _ in range(seq_len)]
+        q_head = [[1.0, 0.0] for _ in range(seq_len)]
         k = [[1.0, 0.0] for _ in range(seq_len)]
         v = [[0.5, 0.5] for _ in range(seq_len)]
 
-        single_out = single_attention_head(single_q, k, v)
+        single_out = dot_product_attention(q_head, k, v)
         self.assertEqual(len(single_out), seq_len)
         self.assertEqual(len(single_out[0]), D_HEAD)
 
-        q = [single_q for _ in range(Q_HEADS)]
+        q = [q_head for _ in range(Q_HEADS)]
         attn_out = attention_head(q, k, v)
         self.assertEqual(len(attn_out), seq_len)
         self.assertEqual(len(attn_out[0]), HEAD_DIM)

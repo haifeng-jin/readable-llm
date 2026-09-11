@@ -423,7 +423,7 @@ def rope(x):
 
 def attention_token(q_token, k_T, v, i):
     """
-    model.predict -> decoder -> decoder_block -> gqa_block -> gqa -> group_0 -> attention_head -> single_attention_head -> attention_token
+    model.predict -> decoder -> decoder_block -> gqa_block -> gqa -> group_0 -> attention_head -> dot_product_attention -> attention_token
 
     Args:
         q_token: [d_head]
@@ -456,12 +456,12 @@ def attention_token(q_token, k_T, v, i):
     token_out = matmul(weights, v)
     return token_out
 
-def single_attention_head(single_q, k, v):
+def dot_product_attention(q_head, k, v):
     """
-    model.predict -> decoder -> decoder_block -> gqa_block -> gqa -> group_0 -> attention_head -> single_attention_head
+    model.predict -> decoder -> decoder_block -> gqa_block -> gqa -> group_0 -> attention_head -> dot_product_attention
 
     Args:
-        single_q: [seq_len, d_head]
+        q_head: [seq_len, d_head]
         k: [seq_len, d_head]
         v: [seq_len, d_head]
 
@@ -478,7 +478,7 @@ def single_attention_head(single_q, k, v):
 
     # head_out: [seq_len, d_head]
     head_out = []
-    for i, q_token in enumerate(single_q):
+    for i, q_token in enumerate(q_head):
         # token_out: [d_head]
         token_out = attention_token(q_token, k_T, v, i)
         head_out.append(token_out)
@@ -502,7 +502,7 @@ def attention_head(q, k, v):
     seq_len = len(k)
 
     # head_outs: [q_heads, seq_len, d_head]
-    head_outs = [single_attention_head(single_q, k, v) for single_q in q]
+    head_outs = [dot_product_attention(q_head, k, v) for q_head in q]
 
     # group_out: [seq_len, head_dim]
     group_out = []
