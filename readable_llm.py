@@ -1068,30 +1068,6 @@ class Embedding(Layer):
         """
         return embedding(input_ids, self.embedding_table)
 
-def matmul_token(token_vec, embedding_table_T):
-    """
-    model.predict -> lm_head -> logits_matmul -> matmul_token
-
-    Args:
-        token_vec: [hidden_size]
-        embedding_table_T: [hidden_size, vocab_size]
-
-    Returns:
-        [vocab_size]
-    """
-    # vocab_size: int
-    vocab_size = len(embedding_table_T[0])
-    # hidden_size: int
-    hidden_size = len(token_vec)
-
-    # logits: [vocab_size]
-    logits = []
-    for col in range(vocab_size):
-        # dot_product: float
-        dot_product = sum(token_vec[k] * embedding_table_T[k][col] for k in range(hidden_size))
-        logits.append(dot_product)
-    return logits
-
 def logits_matmul(rms_out, embedding_table_T):
     """
     model.predict -> lm_head -> logits_matmul
@@ -1104,7 +1080,7 @@ def logits_matmul(rms_out, embedding_table_T):
         [seq_len, vocab_size]
     """
     # all_logits: [seq_len, vocab_size]
-    all_logits = [matmul_token(token_vec, embedding_table_T) for token_vec in rms_out]
+    all_logits = [matmul(token_vec, embedding_table_T) for token_vec in rms_out]
     return all_logits
 
 def slice_last(all_logits):

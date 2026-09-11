@@ -58,7 +58,6 @@ from readable_llm import (
     lookup,
     embedding,
     Embedding,
-    matmul_token,
     logits_matmul,
     slice_last,
     lm_head,
