@@ -2,6 +2,8 @@
 
 A clean, educational, and end-to-end runnable implementation of a modern Large Language Model in a single pure Python file, with zero external dependencies.
 
+**That file is [`readable_llm.py`](readable_llm.py).** Roughly 1,600 lines of standard library Python, importing nothing but `json`, `math`, `os`, and `random`. Read it and you have read the whole model.
+
 This repository is the companion code for the article:
 **[The Anatomy of an LLM: Every tensor operation explained with code and diagrams](https://haifengjin.com/the-anatomy-of-an-llm/)**.
 
@@ -17,6 +19,20 @@ To set expectations clearly, here is what this project optimizes for and what it
 
 If you are a developer who wants to understand how LLMs actually work on a compute level, this repo is for you. While our code does not reflect how computation happens inside a heavily optimized production engine, it is mathematically equivalent to it. Every matrix multiplication, attention score calculation, RoPE rotation, routing decision, and residual addition is laid bare using standard Python lists and arithmetic.
 
+## Repository Layout
+
+```
+readable_llm.py        The model. This is the file to read.
+test_all.py            Unit tests, including one that pins the parameter count.
+training/
+  train.py             Optional. Trains an equivalent PyTorch model.
+  torch_model.py       Optional. The PyTorch mirror of readable_llm.py.
+  export_weights.py    Optional. Dumps the trained weights to JSON.
+  weights.json         The trained weights, already committed.
+```
+
+Everything under `training/` is how the weights were produced, and PyTorch is the only place in this repo that needs it. You can ignore that directory entirely and the model still runs.
+
 ## Code Organization
 
 To make the code easy to navigate:
@@ -24,6 +40,32 @@ To make the code easy to navigate:
 - **Standalone functions perform the compute**: All tensor transformations, matrix multiplications, normalizations, activations, and routing logic live in standalone pure functions.
 
 When reading the code, look at classes to see how weights are structured, and follow standalone functions to see how the computation actually happens.
+
+Every tensor is annotated with its shape, both in the docstrings and above each assignment. None of those shapes carry a batch dimension, because the model runs one sequence at a time.
+
+## Reading Guide
+
+`readable_llm.py` is split into banner-delimited sections, ordered from the smallest operations up to the full model:
+
+| Section | What it covers |
+| --- | --- |
+| Vocabulary & Architecture Constants | The 12-token vocabulary and every size the model uses |
+| Weight Initialization & Loading | Reading `weights.json`, with a seeded random fallback |
+| Tokenizer | Greedy longest-match `encode` and `decode` |
+| Base Neural Network Class | `Layer`, which names and holds weights |
+| Basic Operations | `softmax`, `argmax`, `silu`, `matmul`, `add` |
+| RMSNorm | Normalizing a token vector by its root mean square |
+| RoPE | Rotating query and key pairs to encode position |
+| Attention | Causal scaled dot-product attention |
+| Grouped-Query Attention (GQA) | Query heads sharing one key head and one value head |
+| Mixture of Experts (MoE) | The router and the SwiGLU experts it picks between |
+| Decoder | Stacking GQA and MoE with residual connections |
+| Embedding & LM Head | The token table and the tied output projection |
+| Sampler | Greedy next-token selection |
+| Model | Embedding, decoder, LM head, and the generation loop |
+| Pipeline & Main | Text in, text out |
+
+The article walks the same code in the opposite direction, starting from `pipeline` at the bottom of the file and drilling down. Either order works. Jump to `main()` at the end to follow along with the article, or start at the top to build the model up from arithmetic.
 
 ## Run the Demo
 
