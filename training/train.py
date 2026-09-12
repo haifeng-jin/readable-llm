@@ -1,4 +1,17 @@
-"""Train TorchModel on a single sentence example and save model checkpoints."""
+"""Train the PyTorch model on the single example sentence and save checkpoints.
+
+This script trains the 4,596-parameter model on the single target sentence:
+    "What is 1+1? It's 2.<eos>"
+using AdamW with cross-entropy loss. Because training is performed exclusively
+on this sentence, the resulting model specializes to answer only this single prompt.
+
+Workflow:
+1. Encodes target sentence into token IDs.
+2. Sets input_ids = tokens[:-1] and target_ids = tokens[1:].
+3. Trains for 101 epochs until loss drops below 0.01.
+4. Verifies PyTorch autoregressive generation produces "Whatis 1+1? It's 2.<eos>".
+5. Saves model weights to `training/model.pt`.
+"""
 
 import os
 import sys

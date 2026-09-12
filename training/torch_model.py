@@ -1,11 +1,16 @@
 """PyTorch implementation of the readable-llm architecture.
 
 Matches readable_llm.py layer-by-layer:
-- RMSNorm
-- GQA (Grouped-Query Attention with RoPE and causal mask)
-- MoE (Router with top-k gating and SwiGLU experts)
-- DecoderBlock (Pre-LN residual connections)
-- TorchModel (Embedding tied with LMHead)
+- RMSNorm: Root Mean Square layer normalization without mean-centering
+- GQA: Grouped-Query Attention with RoPE and causal masking
+- MoE: Top-k routing and SwiGLU expert feed-forward networks
+- DecoderBlock: Pre-LN residual transformer block architecture
+- TorchModel: Full model with weight tying between token embedding and LM head
+
+This PyTorch implementation is mathematically equivalent to the pure-Python
+model in readable_llm.py and contains exactly 4,596 parameters. It trains
+via autograd on the example sentence and exports weights to plain JSON
+for pure-Python execution.
 """
 
 import math

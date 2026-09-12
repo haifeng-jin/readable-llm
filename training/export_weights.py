@@ -1,7 +1,24 @@
-"""Convert saved PyTorch model weights to plain Python formats (JSON).
+"""Convert saved PyTorch model weights to plain Python JSON format.
 
-Zero dependency on NumPy: uses pure PyTorch .tolist() and Python's built-in json module.
-The resulting JSON file can be loaded directly in pure Python environments without PyTorch.
+Zero dependency on NumPy:
+Uses pure PyTorch `.tolist()` and Python's built-in `json` module.
+The resulting JSON file contains plain Python nested lists of floats and can
+be loaded directly in pure Python environments with zero external libraries.
+
+Key Alignment:
+The exported JSON dictionary is flat and keyed by the exact hierarchical dot-separated
+names requested by `readable_llm.Layer.init_weights`:
+    - "embedding.embedding_table"
+    - "decoder.decoder_blocks.{i}.gqa_block.rms_norm.gamma"
+    - "decoder.decoder_blocks.{i}.gqa_block.gqa.groups.{g}.w_q"
+    - "decoder.decoder_blocks.{i}.gqa_block.out_matmul.w_matmul"
+    - "decoder.decoder_blocks.{i}.moe_block.rms_norm.gamma"
+    - "decoder.decoder_blocks.{i}.moe_block.router.w_router"
+    - "decoder.decoder_blocks.{i}.moe_block.moe.experts.{e}.w_gate"
+    - "lm_head.gamma"
+
+When `readable_llm.WEIGHTS_PATH` points to this file, `readable_llm.Model()`
+automatically loads each tensor during layer initialization.
 """
 
 import json
