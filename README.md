@@ -40,3 +40,47 @@ Run the full unit test suite:
 ```bash
 python test_all.py
 ```
+
+## Training and Exporting Weights
+
+While `readable_llm.py` runs with randomly initialized weights out of the box with zero external dependencies, the `training/` directory contains an equivalent PyTorch model to train this 4,596-parameter (0.000005B) model on the example sentence (`"What is 1+1? It's 2.<eos>"`).
+
+### 1. Train the PyTorch model
+
+Install PyTorch (`pip install torch`) and run:
+
+```bash
+python training/train.py
+```
+
+This trains for 100 epochs until loss drops below 0.01 and saves the checkpoint to `training/model.pt`.
+
+### 2. Export weights to plain JSON
+
+Convert the PyTorch checkpoint to a lightweight JSON file with zero NumPy dependency:
+
+```bash
+python training/export_weights.py
+```
+
+This generates `training/weights.json` (~100 KB) and verifies that `readable_llm.py` can load every tensor and generate the target output.
+
+### 3. Load trained weights in pure Python
+
+To run `readable_llm.py` with the exported weights, set `WEIGHTS_PATH` in `readable_llm.py`:
+
+```python
+WEIGHTS_PATH = "training/weights.json"
+```
+
+Then run:
+
+```bash
+python readable_llm.py
+```
+
+The model will automatically load each layer's weights from the JSON file and answer:
+
+```
+Whatis 1+1? It's 2.<eos>
+```
