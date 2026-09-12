@@ -179,11 +179,13 @@ def init_weights(*shape, name=None):
 
     if len(shape) == 1:
         # 1D vectors (such as RMSNorm scale gamma) initialize to 1.0
+        # weights_1d: [shape[0]]
         weights_1d = [1.0] * shape[0]
         return weights_1d
     elif len(shape) == 2:
         # 2D weight matrices initialize uniformly in [-0.02, 0.02]
         rows, cols = shape
+        # weights_2d: [rows, cols]
         weights_2d = [[_rng.uniform(-0.02, 0.02) for _ in range(cols)] for _ in range(rows)]
         return weights_2d
     elif len(shape) == 3:
@@ -218,6 +220,7 @@ def split_tokens(text, vocab_dict=vocab):
     Returns:
         list of str: extracted token strings.
     """
+    # tokens: [seq_len] token strings, grown one match at a time
     tokens = []
     i = 0
     while i < len(text):
@@ -265,7 +268,9 @@ class Tokenizer:
         Returns:
             list of int: token IDs of length [seq_len].
         """
+        # tokens: [seq_len] token strings
         tokens = split_tokens(text, self.vocab)
+        # input_ids: [seq_len] token IDs
         input_ids = [self.vocab[token] for token in tokens]
         return input_ids
 
@@ -343,10 +348,12 @@ def softmax(scores):
     # 1. Find max value for numerical stability to prevent float overflow
     max_score = max(scores)
     # 2. Exponentiate shifted scores
+    # exp_scores: [n]
     exp_scores = [math.exp(s - max_score) for s in scores]
     # 3. Sum of exponentiated values
     sum_exp = sum(exp_scores)
     # 4. Normalize to get probability distribution
+    # probs: [n]
     probs = [s / sum_exp for s in exp_scores]
     return probs
 
@@ -397,6 +404,7 @@ def matmul(vec, matrix):
     """
     in_dim = len(vec)
     out_dim = len(matrix[0])
+    # output: [out_dim]
     output = []
     # Compute dot product between vec and each column of matrix
     for col in range(out_dim):
@@ -423,6 +431,7 @@ def add(tensor_a, tensor_b):
     hidden_size = len(tensor_a[0])
 
     # Walk the two tensors position by position and sum the matching cells
+    # output: [seq_len, hidden_size]
     output = [[0.0] * hidden_size for _ in range(seq_len)]
     for i in range(seq_len):
         for j in range(hidden_size):
@@ -457,6 +466,7 @@ def norm_token(token_vec, gamma):
     rms = (sum_of_squares / len(token_vec) + EPS) ** 0.5
 
     # 3. Scale each element by gamma: (x_i / rms) * gamma_i
+    # output: [hidden_size]
     output = []
     for i in range(len(token_vec)):
         output.append(token_vec[i] / rms * gamma[i])
@@ -474,6 +484,7 @@ def rms_norm(tensor, gamma):
     Returns:
         list of list of float [seq_len, hidden_size]
     """
+    # rms_out: [seq_len, hidden_size]
     rms_out = [norm_token(token_vec, gamma) for token_vec in tensor]
     return rms_out
 
@@ -486,7 +497,7 @@ class RMSNorm(Layer):
 
     def __init__(self, name="rms_norm"):
         super().__init__(name)
-        # gamma scales initialize to 1.0
+        # gamma: [hidden_size] = [12], scales initialize to 1.0
         self.gamma = self.init_weights("gamma", HIDDEN_SIZE)
 
     def predict(self, tensor_or_vec):
@@ -552,9 +563,11 @@ def rope_token(token_vec, pos):
         list of float [d_head]: position-encoded head vector
     """
     d_head = len(token_vec)
+    # output: [d_head], filled two entries at a time
     output = []
     # Process head vector in adjacent pairs: (0, 1), (2, 3), ...
     for i in range(0, d_head, 2):
+        # r0, r1: scalars, the rotated version of the (i, i + 1) pair
         r0, r1 = rope_pair(token_vec[i], token_vec[i + 1], pos, i, d_head)
         output.append(r0)
         output.append(r1)
@@ -571,6 +584,7 @@ def rope_2d(x):
     Returns:
         list of list of float [seq_len, d_head]
     """
+    # output: [seq_len, d_head]
     output = [rope_token(token_vec, pos) for pos, token_vec in enumerate(x)]
     return output
 
@@ -585,6 +599,7 @@ def rope_3d(x):
     Returns:
         list of list of list of float [q_heads, seq_len, d_head]
     """
+    # output: [q_heads, seq_len, d_head]
     output = [rope_2d(head) for head in x]
     return output
 
@@ -629,20 +644,24 @@ def attention_token(q_token, k_T, v, i):
     seq_len = len(v)
 
     # 1. Compute raw similarity dot products against every key: [seq_len]
+    # dot_products: [seq_len]
     dot_products = matmul(q_token, k_T)
 
     # 2. Causal masking plus scaling. We only keep positions 0..i, so token i
     #    never sees the future, and we divide by sqrt(d_head) to stop the dot
     #    products from growing with head width and saturating the softmax.
+    # scores: [i + 1]
     scores = []
     for j in range(i + 1):
         scores.append(dot_products[j] / (d_head ** 0.5))
 
     # 3. Turn the visible scores into probabilities, then pad the masked-out
     #    future positions with 0.0 so the vector lines up with v: [seq_len]
+    # weights: [seq_len]
     weights = softmax(scores) + [0.0] * (seq_len - (i + 1))
 
     # 4. Weighted sum of value vectors: sum(weight_j * v_j)
+    # token_out: [d_head]
     token_out = matmul(weights, v)
     return token_out
 
@@ -663,11 +682,14 @@ def dot_product_attention(q_head, k, v):
     d_head = len(k[0])
 
     # Transpose key matrix from [seq_len, d_head] to [d_head, seq_len] for fast dot products
+    # k_T: [d_head, seq_len]
     k_T = [[k[row][col] for row in range(seq_len)] for col in range(d_head)]
 
     # Compute attention output for each token in the sequence
+    # head_out: [seq_len, d_head]
     head_out = []
     for i, q_token in enumerate(q_head):
+        # token_out: [d_head]
         token_out = attention_token(q_token, k_T, v, i)
         head_out.append(token_out)
     return head_out
@@ -692,11 +714,14 @@ def attention_head(q, k, v):
     seq_len = len(k)
 
     # Compute attention for each query head independently against the shared (k, v)
+    # head_outs: [q_heads, seq_len, d_head]
     head_outs = [dot_product_attention(q_head, k, v) for q_head in q]
 
     # Concatenate the head vectors for each token: [q_heads * d_head] = [head_dim]
+    # out: [seq_len, head_dim]
     out = []
     for t in range(seq_len):
+        # token_out: [head_dim], one token's slice of every head's output
         token_out = []
         for h in range(q_heads):
             token_out.extend(head_outs[h][t])
@@ -728,15 +753,21 @@ def group_0(rms_out, w_q, w_k, w_v):
         list of list of float [seq_len, head_dim]: concatenated group attention output
     """
     # 1. Project input to Q (multiple heads), K (single head), and V (single head)
+    # q: [q_heads, seq_len, d_head]
     q = [[matmul(token_vec, w) for token_vec in rms_out] for w in w_q]
+    # k: [seq_len, d_head]
     k = [matmul(token_vec, w_k) for token_vec in rms_out]
+    # v: [seq_len, d_head]
     v = [matmul(token_vec, w_v) for token_vec in rms_out]
 
     # 2. Inject relative positional information via RoPE into queries and keys
+    # q: [q_heads, seq_len, d_head], same shape, rotated in place
     q = rope(q)
+    # k: [seq_len, d_head], same shape, rotated in place
     k = rope(k)
 
     # 3. Compute causal multi-head attention and concatenate query heads
+    # group_0_out: [seq_len, head_dim] where head_dim = q_heads * d_head
     group_0_out = attention_head(q, k, v)
     return group_0_out
 
@@ -749,10 +780,11 @@ class Group(Layer):
 
     def __init__(self, name="group_0"):
         super().__init__(name)
-        # w_q shape: [q_heads, hidden_size, d_head] = [2, 12, 2]
+        # w_q: [q_heads, hidden_size, d_head] = [2, 12, 2]
         self.w_q = self.init_weights("w_q", Q_HEADS, HIDDEN_SIZE, D_HEAD)
-        # w_k, w_v shape: [hidden_size, d_head] = [12, 2]
+        # w_k: [hidden_size, d_head] = [12, 2]
         self.w_k = self.init_weights("w_k", HIDDEN_SIZE, D_HEAD)
+        # w_v: [hidden_size, d_head] = [12, 2]
         self.w_v = self.init_weights("w_v", HIDDEN_SIZE, D_HEAD)
 
     def predict(self, rms_out):
@@ -786,11 +818,14 @@ def gqa(rms_out, groups):
     seq_len = len(rms_out)
 
     # 1. Run each attention group
+    # group_outs: [num_groups, seq_len, head_dim]
     group_outs = [group(rms_out) for group in groups]
 
     # 2. Concatenate outputs across groups: num_groups * head_dim = 3 * 4 = 12 (hidden_size)
+    # gqa_out: [seq_len, hidden_size]
     gqa_out = []
     for t in range(seq_len):
+        # row: [hidden_size], one token's slice of every group's output
         row = []
         for out in group_outs:
             row.extend(out[t])
@@ -802,6 +837,7 @@ class GQA(Layer):
 
     def __init__(self, name="gqa"):
         super().__init__(name)
+        # groups: num_groups Group layers, each holding its own w_q, w_k, w_v
         self.groups = [Group(name=f"{self.name}.groups.{i}") for i in range(NUM_GROUPS)]
 
     def predict(self, rms_out):
@@ -829,6 +865,7 @@ def out_matmul(gqa_out, w_matmul):
     Returns:
         list of list of float [seq_len, hidden_size]
     """
+    # gqa_block_out: [seq_len, hidden_size]
     gqa_block_out = [matmul(token_vec, w_matmul) for token_vec in gqa_out]
     return gqa_block_out
 
@@ -837,6 +874,7 @@ class OutMatmul(Layer):
 
     def __init__(self, name="out_matmul"):
         super().__init__(name)
+        # w_matmul: [hidden_size, hidden_size] = [12, 12]
         self.w_matmul = self.init_weights("w_matmul", HIDDEN_SIZE, HIDDEN_SIZE)
 
     def predict(self, gqa_out):
@@ -867,12 +905,15 @@ def gqa_block(gqa_block_in, rms_norm, gqa, out_matmul):
         [seq_len, hidden_size]
     """
     # 1. Pre-normalization
+    # rms_out: [seq_len, hidden_size]
     rms_out = rms_norm(gqa_block_in)
 
     # 2. Grouped-Query Attention
+    # gqa_out: [seq_len, hidden_size]
     gqa_out = gqa(rms_out)
 
     # 3. Output projection
+    # gqa_block_out: [seq_len, hidden_size]
     gqa_block_out = out_matmul(gqa_out)
     return gqa_block_out
 
@@ -918,19 +959,24 @@ def expert_token(token_vec, w_gate, w_up, w_down):
         list of float [hidden_size]: expert output vector
     """
     # 1. Gate projection: [hidden_size] -> [inter_size]
+    # x_gate: [inter_size]
     x_gate = matmul(token_vec, w_gate)
 
     # 2. Up projection: [hidden_size] -> [inter_size]
+    # x_up: [inter_size]
     x_up = matmul(token_vec, w_up)
 
     # 3. Apply SiLU (Swish) non-linear activation to gate projection
+    # x_act: [inter_size]
     x_act = [silu(x) for x in x_gate]
 
     # 4. Element-wise multiply activated gate with up projection
     inter_size = len(x_act)
+    # x_inter: [inter_size]
     x_inter = [x_act[i] * x_up[i] for i in range(inter_size)]
 
     # 5. Down projection back to hidden size: [inter_size] -> [hidden_size]
+    # x_down: [hidden_size]
     x_down = matmul(x_inter, w_down)
     return x_down
 
@@ -948,6 +994,7 @@ def expert(tensor, w_gate, w_up, w_down):
     Returns:
         list of list of float [seq_len, hidden_size]
     """
+    # output: [seq_len, hidden_size]
     output = [expert_token(token_vec, w_gate, w_up, w_down) for token_vec in tensor]
     return output
 
@@ -956,8 +1003,11 @@ class Expert(Layer):
 
     def __init__(self, name="expert"):
         super().__init__(name)
+        # w_gate: [hidden_size, inter_size] = [12, 16]
         self.w_gate = self.init_weights("w_gate", HIDDEN_SIZE, INTER_SIZE)
+        # w_up: [hidden_size, inter_size] = [12, 16]
         self.w_up = self.init_weights("w_up", HIDDEN_SIZE, INTER_SIZE)
+        # w_down: [inter_size, hidden_size] = [16, 12]
         self.w_down = self.init_weights("w_down", INTER_SIZE, HIDDEN_SIZE)
 
     def predict(self, token_vec_or_tensor):
@@ -992,21 +1042,28 @@ def route_token(token_vec, w_router):
         list of float [num_experts]: sparse routing weights summing to 1.0
     """
     # 1. Project token vector to router logits: [hidden_size] @ [hidden_size, num_experts]
+    # logits: [num_experts]
     logits = matmul(token_vec, w_router)
 
     # 2. Sort expert indices by descending logit values
     num_experts = len(logits)
+    # indices: [num_experts]
     indices = [i for i in range(num_experts)]
+    # sorted_indices: [num_experts]
     sorted_indices = sorted(indices, key=lambda i: logits[i], reverse=True)
 
     # 3. Select top-k experts
+    # top_indices: [TOP_K]
     top_indices = sorted_indices[:TOP_K]
+    # top_logits: [TOP_K]
     top_logits = [logits[i] for i in top_indices]
 
     # 4. Compute softmax probabilities over the selected top-k experts
+    # top_probs: [TOP_K]
     top_probs = softmax(top_logits)
 
     # 5. Populate sparse weight vector (selected experts get probabilities; others get 0.0)
+    # top_weights: [num_experts]
     top_weights = [0.0] * num_experts
     for k in range(TOP_K):
         top_weights[top_indices[k]] = top_probs[k]
@@ -1024,6 +1081,7 @@ def router(rms_out, w_router):
     Returns:
         list of list of float [seq_len, num_experts]
     """
+    # top_weights: [seq_len, num_experts]
     top_weights = [route_token(token_vec, w_router) for token_vec in rms_out]
     return top_weights
 
@@ -1032,6 +1090,7 @@ class Router(Layer):
 
     def __init__(self, name="router"):
         super().__init__(name)
+        # w_router: [hidden_size, num_experts] = [12, 3]
         self.w_router = self.init_weights("w_router", HIDDEN_SIZE, NUM_EXPERTS)
 
     def predict(self, rms_out):
@@ -1069,6 +1128,7 @@ def moe_token(token_vec, top_weights, experts):
         list of float [hidden_size]: combined expert output
     """
     hidden_size = len(token_vec)
+    # moe_out: [hidden_size], the running weighted sum of expert outputs
     moe_out = [0.0] * hidden_size
 
     # Accumulate weighted contributions from active experts
@@ -1076,6 +1136,7 @@ def moe_token(token_vec, top_weights, experts):
         # Experts the router did not pick have weight 0.0 and never run
         if top_weights[i] == 0.0:
             continue
+        # expert_out: [hidden_size]
         expert_out = experts[i](token_vec)
         for j in range(hidden_size):
             moe_out[j] += top_weights[i] * expert_out[j]
@@ -1094,6 +1155,7 @@ def moe(rms_out, top_weights, experts):
     Returns:
         list of list of float [seq_len, hidden_size]
     """
+    # moe_out: [seq_len, hidden_size]
     moe_out = [
         moe_token(token_vec, weights, experts)
         for token_vec, weights in zip(rms_out, top_weights)
@@ -1105,6 +1167,7 @@ class MoE(Layer):
 
     def __init__(self, name="moe"):
         super().__init__(name)
+        # experts: num_experts Expert layers, each holding w_gate, w_up, w_down
         self.experts = [Expert(name=f"{self.name}.experts.{i}") for i in range(NUM_EXPERTS)]
 
     def predict(self, rms_out, top_weights):
@@ -1136,12 +1199,15 @@ def moe_block(moe_in, rms_norm, router, moe):
         [seq_len, hidden_size]
     """
     # 1. Pre-normalization
+    # rms_out: [seq_len, hidden_size]
     rms_out = rms_norm(moe_in)
 
     # 2. Route tokens to determine expert gating weights
+    # top_weights: [seq_len, num_experts]
     top_weights = router(rms_out)
 
     # 3. Compute expert feed-forward outputs and aggregate by weights
+    # moe_out: [seq_len, hidden_size]
     moe_out = moe(rms_out, top_weights)
     return moe_out
 
@@ -1187,11 +1253,15 @@ def decoder_block(decoder_in, gqa_block, moe_block):
         list of list of float [seq_len, hidden_size]
     """
     # 1. Grouped-Query Attention sub-block with residual connection
+    # gqa_out: [seq_len, hidden_size]
     gqa_out = gqa_block(decoder_in)
+    # residual_1: [seq_len, hidden_size]
     residual_1 = add(decoder_in, gqa_out)
 
     # 2. Mixture of Experts sub-block with residual connection
+    # moe_out: [seq_len, hidden_size]
     moe_out = moe_block(residual_1)
+    # decoder_out: [seq_len, hidden_size]
     decoder_out = add(residual_1, moe_out)
     return decoder_out
 
@@ -1228,6 +1298,7 @@ def decoder(embed_out, decoder_blocks):
     Returns:
         list of list of float [seq_len, hidden_size]
     """
+    # decoder_out: [seq_len, hidden_size], updated in place by each block
     decoder_out = embed_out
     for block in decoder_blocks:
         decoder_out = block(decoder_out)
@@ -1270,6 +1341,7 @@ def lookup(token_id, embedding_table):
     Returns:
         list of float [hidden_size]: token vector
     """
+    # token_vec: [hidden_size]
     token_vec = embedding_table[token_id]
     return token_vec
 
@@ -1285,6 +1357,7 @@ def embedding(input_ids, embedding_table):
     Returns:
         list of list of float [seq_len, hidden_size]
     """
+    # embed_out: [seq_len, hidden_size]
     embed_out = [lookup(token_id, embedding_table) for token_id in input_ids]
     return embed_out
 
@@ -1293,9 +1366,10 @@ class Embedding(Layer):
 
     def __init__(self, name="embedding"):
         super().__init__(name)
-        # embedding_table shape: [vocab_size, hidden_size] = [12, 12]
+        # embedding_table: [vocab_size, hidden_size] = [12, 12]
         self.embedding_table = self.init_weights("embedding_table", VOCAB_SIZE, HIDDEN_SIZE)
-        # Precompute transpose [hidden_size, vocab_size] for tied LM head projection
+        # Precompute the transpose for the tied LM head projection
+        # embedding_table_T: [hidden_size, vocab_size] = [12, 12]
         self.embedding_table_T = [
             [self.embedding_table[r][c] for r in range(VOCAB_SIZE)]
             for c in range(HIDDEN_SIZE)
@@ -1326,6 +1400,7 @@ def logits_matmul(rms_out, embedding_table_T):
     Returns:
         list of list of float [seq_len, vocab_size]
     """
+    # all_logits: [seq_len, vocab_size]
     all_logits = [matmul(token_vec, embedding_table_T) for token_vec in rms_out]
     return all_logits
 
@@ -1344,6 +1419,7 @@ def slice_last(all_logits):
     Returns:
         list of float [vocab_size]: logits for predicting the next token
     """
+    # logits: [vocab_size]
     logits = all_logits[-1]
     return logits
 
@@ -1365,8 +1441,11 @@ def lm_head(decoder_out, gamma, embedding_table_T):
     Returns:
         list of float [vocab_size]: prediction scores across vocabulary
     """
+    # rms_out: [seq_len, hidden_size]
     rms_out = rms_norm(decoder_out, gamma)
+    # all_logits: [seq_len, vocab_size]
     all_logits = logits_matmul(rms_out, embedding_table_T)
+    # logits: [vocab_size]
     logits = slice_last(all_logits)
     return logits
 
@@ -1383,8 +1462,10 @@ class LMHead(Layer):
             name: str, hierarchical identifier for weight lookup.
         """
         super().__init__(name)
+        # gamma: [hidden_size]
         self.gamma = self.init_weights("gamma", HIDDEN_SIZE)
         # Weight tying: share embedding table transpose to reduce parameters
+        # embedding_table_T: [hidden_size, vocab_size]
         self.embedding_table_T = (
             embedding_table_T
             if embedding_table_T is not None
@@ -1416,9 +1497,11 @@ def greedy_sampler(model, input_ids):
     Returns:
         int: highest-scoring next token ID
     """
-    # Forward pass through model to get logits for next token: [vocab_size]
+    # Forward pass through model to get logits for next token
+    # logits: [vocab_size]
     logits = model.predict(input_ids)
     # Greedily pick the token ID with the maximum probability score
+    # next_token_id: int
     next_token_id = argmax(logits)
     return next_token_id
 
@@ -1441,9 +1524,11 @@ class Model(Layer):
         # Seed RNG so random fallback weights are reproducible across runs.
         # Only matters when WEIGHTS_PATH is None or the file is missing.
         _rng.seed(42)
+        # embedding.embedding_table: [vocab_size, hidden_size]
         self.embedding = Embedding(name="embedding")
         self.decoder = Decoder(name="decoder")
         # Tie the LM head projection matrix to the embedding table transpose
+        # embedding_table_T: [hidden_size, vocab_size]
         self.lm_head = LMHead(self.embedding.embedding_table_T, name="lm_head")
 
     def predict(self, input_ids):
@@ -1461,8 +1546,11 @@ class Model(Layer):
         Returns:
             list of float [vocab_size]: next-token prediction logits
         """
+        # embed_out: [seq_len, hidden_size]
         embed_out = self.embedding(input_ids)
+        # decoder_out: [seq_len, hidden_size]
         decoder_out = self.decoder(embed_out)
+        # logits: [vocab_size]
         logits = self.lm_head(decoder_out)
         return logits
 
@@ -1483,12 +1571,15 @@ class Model(Layer):
         """
         for _ in range(max_new_tokens):
             # Predict one token from everything generated so far
+            # next_token_id: int
             next_token_id = greedy_sampler(self, input_ids)
             # Append it, so the next pass sees a sequence one token longer
+            # input_ids: [seq_len + 1]
             input_ids = input_ids + [next_token_id]
             # Stop immediately when end-of-sequence token is generated
             if next_token_id == EOS_TOKEN_ID:
                 break
+        # input_ids: [total_seq_len]
         return input_ids
 
 # ============================== Pipeline & Main ==============================
@@ -1511,12 +1602,15 @@ def pipeline(prompt, tokenizer=None, model=None, max_new_tokens=MAX_NEW_TOKENS):
         model = Model()
 
     # 1. Encode text prompt to integer token IDs
+    # input_ids: [seq_len]
     input_ids = tokenizer.encode(prompt)
 
     # 2. Autoregressively generate new token IDs
+    # output_ids: [total_seq_len]
     output_ids = model.generate(input_ids, max_new_tokens=max_new_tokens)
 
     # 3. Decode token IDs back to human-readable string
+    # output_text: str
     output_text = tokenizer.decode(output_ids)
     return output_text
 
