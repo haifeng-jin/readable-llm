@@ -33,20 +33,21 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")
 import torch
 
 import readable_llm
-from readable_llm import Tokenizer, vocab
 from readable_llm import Model as PurePyModel
-from readable_llm import pipeline
-from training.torch_model import (
-    TorchModel,
-    export_torch_weights_to_dict,
-)
+from readable_llm import Tokenizer, pipeline
+from training.torch_model import TorchModel, export_torch_weights_to_dict
 
 CHECKPOINT_PATH = os.path.join(os.path.dirname(__file__), "model.pt")
 EXPORT_JSON_PATH = os.path.join(os.path.dirname(__file__), "weights.json")
 
 
 def convert_and_export(pt_path=CHECKPOINT_PATH, json_path=EXPORT_JSON_PATH):
-    """Loads PyTorch checkpoint and exports weights to plain JSON."""
+    """Load the PyTorch checkpoint, write weights.json, and check the result.
+
+    Args:
+        pt_path: str, the checkpoint written by train.py.
+        json_path: str, where to write the plain JSON weights.
+    """
     if not os.path.exists(pt_path):
         raise FileNotFoundError(
             f"PyTorch weights file '{pt_path}' not found. Run training/train.py first."
@@ -68,10 +69,12 @@ def convert_and_export(pt_path=CHECKPOINT_PATH, json_path=EXPORT_JSON_PATH):
     print(f"Exported plain Python weights to JSON: {json_path}")
     print(f"File size: {os.path.getsize(json_path) / 1024:.1f} KB")
 
-    # 4. Verify loading into pure Python readable_llm.Model via WEIGHTS_PATH
+    # 4. Verify the pure Python model picks the weights up and says the same
+    #    thing the PyTorch model did. Point WEIGHTS_PATH at the file we just
+    #    wrote and clear the cache, in case an earlier file was already read.
     print("\n--- Verifying Pure Python Model with Exported Weights ---")
     readable_llm.WEIGHTS_PATH = json_path
-    readable_llm._loaded_weights_cache = {}
+    readable_llm.clear_weights_cache()
     py_model = PurePyModel()
 
     tokenizer = Tokenizer()

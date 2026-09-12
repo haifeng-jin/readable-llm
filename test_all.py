@@ -1,3 +1,14 @@
+"""Unit tests for readable_llm.
+
+Covers three things:
+1. Every layer builds with zero arguments and produces the expected tensor shapes.
+2. The standalone math functions return the values we expect on small inputs.
+3. The exported weights in training/weights.json line up with what the model asks
+   for, add up to 4,596 parameters, and still generate the trained sentence.
+
+Run with: python test_all.py
+"""
+
 import unittest
 from readable_llm import (
     VOCAB_SIZE,
@@ -23,7 +34,6 @@ from readable_llm import (
     norm_token,
     rms_norm,
     RMSNorm,
-    RmsNorm,
     rope_pair,
     rope_token,
     rope_2d,
@@ -62,7 +72,6 @@ from readable_llm import (
     slice_last,
     lm_head,
     LMHead,
-    LmHead,
     greedy_sampler,
     Model,
     pipeline,
@@ -75,8 +84,9 @@ class TestReadableLLM(unittest.TestCase):
         text = "What is 1+1?"
         encoded = tokenizer.encode(text)
         self.assertEqual(encoded, [3, 4, 5, 6, 7, 8])
+        # Leading spaces live inside the tokens, so decoding round-trips exactly
         decoded = tokenizer.decode(encoded)
-        self.assertEqual(decoded, "Whatis 1+1?")
+        self.assertEqual(decoded, text)
 
         # Test zero-argument default init
         default_tokenizer = Tokenizer()
@@ -85,7 +95,6 @@ class TestReadableLLM(unittest.TestCase):
     def test_layer_base_class(self):
         all_layer_classes = [
             RMSNorm,
-            RmsNorm,
             Group,
             GQA,
             OutMatmul,
@@ -98,7 +107,6 @@ class TestReadableLLM(unittest.TestCase):
             Decoder,
             Embedding,
             LMHead,
-            LmHead,
             Model,
         ]
         for cls in all_layer_classes:
@@ -331,7 +339,7 @@ class TestReadableLLM(unittest.TestCase):
     def test_pipeline(self):
         output = pipeline("What is 1+1?", max_new_tokens=2)
         self.assertIsInstance(output, str)
-        self.assertTrue(output.startswith("Whatis 1+1?"))
+        self.assertTrue(output.startswith("What is 1+1?"))
 
     def test_weights_json_loading(self):
         import json
@@ -367,6 +375,7 @@ class TestReadableLLM(unittest.TestCase):
         old_path = readable_llm.WEIGHTS_PATH
         try:
             readable_llm.WEIGHTS_PATH = weights_path
+            readable_llm.clear_weights_cache()
             loaded_model = readable_llm.Model()
             self.assertEqual(
                 loaded_model.embedding.embedding_table,
@@ -376,9 +385,30 @@ class TestReadableLLM(unittest.TestCase):
             # Test generation with loaded weights
             tok = readable_llm.Tokenizer()
             gen_out = readable_llm.pipeline("What is 1+1?", tokenizer=tok, model=loaded_model)
-            self.assertEqual(gen_out, "Whatis 1+1? It's 2.<eos>")
+            self.assertEqual(gen_out, "What is 1+1? It's 2.<eos>")
         finally:
             readable_llm.WEIGHTS_PATH = old_path
+            readable_llm.clear_weights_cache()
+
+    def test_parameter_count(self):
+        """The README and docstrings advertise 4,596 parameters. Verify it."""
+        import json
+        import os
+
+        weights_path = os.path.join(os.path.dirname(__file__), "training", "weights.json")
+        if not os.path.exists(weights_path):
+            self.skipTest("training/weights.json not found")
+
+        with open(weights_path, "r", encoding="utf-8") as f:
+            weights_data = json.load(f)
+
+        def count(tensor):
+            if isinstance(tensor, list):
+                return sum(count(item) for item in tensor)
+            return 1
+
+        total = sum(count(tensor) for tensor in weights_data.values())
+        self.assertEqual(total, 4596)
 
 
 if __name__ == "__main__":

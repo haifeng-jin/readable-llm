@@ -1,16 +1,27 @@
 """PyTorch implementation of the readable-llm architecture.
 
+Why this file exists:
+`readable_llm.py` can run a forward pass, but it has no autograd, so it cannot
+train itself. This file rebuilds the exact same architecture in PyTorch, trains
+it in `train.py`, and hands the learned numbers back as plain JSON through
+`export_weights.py`. Nothing here is imported by `readable_llm.py`, which stays
+dependency free.
+
 Matches readable_llm.py layer-by-layer:
-- RMSNorm: Root Mean Square layer normalization without mean-centering
-- GQA: Grouped-Query Attention with RoPE and causal masking
-- MoE: Top-k routing and SwiGLU expert feed-forward networks
-- DecoderBlock: Pre-LN residual transformer block architecture
+- TorchRMSNorm: Root Mean Square layer normalization without mean-centering
+- TorchGQABlock: Grouped-Query Attention with RoPE and causal masking
+- TorchMoEBlock: Top-k routing and SwiGLU expert feed-forward networks
+- TorchDecoderBlock: Pre-LN residual transformer block architecture
 - TorchModel: Full model with weight tying between token embedding and LM head
 
+One deliberate difference: PyTorch stacks the per-group and per-expert weights
+into single batched tensors (`w_q` is [num_groups, q_heads, hidden_size, d_head]
+rather than one matrix per group) because batched einsums train faster.
+`export_torch_weights_to_dict` slices those stacks back apart into the
+per-group and per-expert tensors that `readable_llm.py` expects.
+
 This PyTorch implementation is mathematically equivalent to the pure-Python
-model in readable_llm.py and contains exactly 4,596 parameters. It trains
-via autograd on the example sentence and exports weights to plain JSON
-for pure-Python execution.
+model in readable_llm.py and contains exactly 4,596 parameters.
 """
 
 import math
@@ -221,7 +232,21 @@ class TorchModel(nn.Module):
 
 
 def export_torch_weights_to_dict(torch_model):
-    """Converts TorchModel parameters to a flat dictionary matching readable_llm tensor names."""
+    """Convert TorchModel parameters to a flat dict keyed by readable_llm tensor names.
+
+    The keys here are exactly the names `readable_llm.Layer.init_weights` builds
+    from each layer's position in the hierarchy, which is what lets the pure
+    Python model pick up these weights with no loading code of its own.
+
+    Note the slicing: PyTorch keeps one stacked tensor per block, so `w_q[g]`
+    pulls out group g and `w_gate[e]` pulls out expert e.
+
+    Args:
+        torch_model: a trained TorchModel.
+
+    Returns:
+        dict mapping tensor name -> nested lists of floats.
+    """
     with torch.no_grad():
         weights = {}
         weights["embedding.embedding_table"] = torch_model.embedding.weight.tolist()
@@ -239,36 +264,7 @@ def export_torch_weights_to_dict(torch_model):
                 weights[f"{prefix}.moe_block.moe.experts.{e}.w_gate"] = t_blk.moe_block.w_gate[e].tolist()
                 weights[f"{prefix}.moe_block.moe.experts.{e}.w_up"] = t_blk.moe_block.w_up[e].tolist()
                 weights[f"{prefix}.moe_block.moe.experts.{e}.w_down"] = t_blk.moe_block.w_down[e].tolist()
+        # The LM head projection is tied to the embedding table, so there is no
+        # separate matrix to export here, only the final normalization scale.
         weights["lm_head.gamma"] = torch_model.final_norm.weight.tolist()
         return weights
-
-
-def load_weights_into_readable_model(py_model, weights_dict):
-    """Loads flat weights dictionary into a readable_llm.Model instance."""
-    # 1. Embedding & tied LM head
-    py_model.embedding.embedding_table = weights_dict["embedding.embedding_table"]
-    vocab_size = len(py_model.embedding.embedding_table)
-    hidden_size = len(py_model.embedding.embedding_table[0])
-    py_model.embedding.embedding_table_T = [
-        [py_model.embedding.embedding_table[r][c] for r in range(vocab_size)]
-        for c in range(hidden_size)
-    ]
-    py_model.lm_head.embedding_table_T = py_model.embedding.embedding_table_T
-    py_model.lm_head.gamma = weights_dict["lm_head.gamma"]
-
-    # 2. Decoder blocks
-    for l_idx, blk in enumerate(py_model.decoder.decoder_blocks):
-        prefix = f"decoder.decoder_blocks.{l_idx}"
-        blk.gqa_block_layer.rms_norm.gamma = weights_dict[f"{prefix}.gqa_block.rms_norm.gamma"]
-        blk.gqa_block_layer.out_matmul.w_matmul = weights_dict[f"{prefix}.gqa_block.out_matmul.w_matmul"]
-        for g_idx, grp in enumerate(blk.gqa_block_layer.gqa.groups):
-            grp.w_q = weights_dict[f"{prefix}.gqa_block.gqa.groups.{g_idx}.w_q"]
-            grp.w_k = weights_dict[f"{prefix}.gqa_block.gqa.groups.{g_idx}.w_k"]
-            grp.w_v = weights_dict[f"{prefix}.gqa_block.gqa.groups.{g_idx}.w_v"]
-
-        blk.moe_block_layer.rms_norm.gamma = weights_dict[f"{prefix}.moe_block.rms_norm.gamma"]
-        blk.moe_block_layer.router.w_router = weights_dict[f"{prefix}.moe_block.router.w_router"]
-        for e_idx, exp in enumerate(blk.moe_block_layer.moe.experts):
-            exp.w_gate = weights_dict[f"{prefix}.moe_block.moe.experts.{e_idx}.w_gate"]
-            exp.w_up = weights_dict[f"{prefix}.moe_block.moe.experts.{e_idx}.w_up"]
-            exp.w_down = weights_dict[f"{prefix}.moe_block.moe.experts.{e_idx}.w_down"]

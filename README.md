@@ -36,12 +36,12 @@ python readable_llm.py
 The script runs the prompt `"What is 1+1?"` and outputs:
 
 ```
-Whatis 1+1? It's 2.<eos>
+What is 1+1? It's 2.<eos>
 ```
 
 This tiny model was trained specifically on this single sentence, so it can only answer this one prompt. It automatically loads the pre-trained weights from `training/weights.json`. To run with random initialization instead, set `WEIGHTS_PATH = None` in `readable_llm.py`.
 
-### Run Tests
+## Run Tests
 
 Run the full unit test suite:
 
@@ -50,6 +50,8 @@ python test_all.py
 ```
 
 ## Train and Export Weights
+
+The model itself needs nothing but a Python interpreter. Training is the one part that uses PyTorch, and it is entirely optional since the trained weights are already committed.
 
 To re-train the 4,596-parameter (0.000005B) model from scratch and re-export the weights:
 
@@ -60,3 +62,7 @@ python training/train.py
 # 2. Export weights to JSON with zero NumPy dependency (saves training/weights.json)
 python training/export_weights.py
 ```
+
+## License
+
+[MIT](LICENSE)

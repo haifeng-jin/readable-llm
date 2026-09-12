@@ -27,14 +27,14 @@ Single Prompt Capability:
 Because this tiny model was trained exclusively on the single sentence:
     "What is 1+1? It's 2.<eos>"
 it can only answer this one prompt. Running pipeline("What is 1+1?") produces:
-    "Whatis 1+1? It's 2.<eos>"
+    "What is 1+1? It's 2.<eos>"
 For any other prompt, the model will output nonsensical tokens because it
 has not been trained on any other data.
 
 Training & Weight Export:
 -------------------------
 The model weights were trained using an equivalent PyTorch model in
-`training/train.py` for 100 epochs using AdamW, then exported to plain JSON
+`training/train.py` for 101 epochs using AdamW, then exported to plain JSON
 (`training/weights.json`) via `training/export_weights.py` without NumPy.
 
 Weight Loading Mechanism:
@@ -52,6 +52,18 @@ Code Organization:
   instance invokes its `predict()` method.
 - Standalone pure functions execute the underlying mathematical operations
   (RMSNorm, RoPE, attention, SwiGLU, softmax, and matrix multiplication).
+
+Reading Guide:
+--------------
+The file is ordered bottom-up, from the smallest operations to the full model:
+vocabulary, weight loading, tokenizer, the Layer base class, basic math ops,
+RMSNorm, RoPE, attention, GQA, MoE, decoder, embedding and LM head, sampler,
+Model, and finally the pipeline.
+
+The article walks the same code top-down instead, starting from `pipeline` at
+the bottom of this file and drilling into each submodule. Either direction
+works: jump to `main()` and `pipeline()` at the end to follow the article, or
+start from the top to build the model up from arithmetic.
 """
 
 import json
@@ -67,12 +79,17 @@ WEIGHTS_PATH = os.path.join(os.path.dirname(__file__), "training", "weights.json
 
 # Minimal 12-token vocabulary containing only the tokens needed for:
 # "What is 1+1? It's 2.<eos>" plus special tokens (<pad>, <bos>, <eos>).
+#
+# Real tokenizers attach a leading space to the word that follows it, so " 1"
+# (with a space) and "1" (without) are two different tokens with two different
+# IDs. We keep that behavior here: " is", " It's", and " 2" all carry their
+# leading space, which is why decoding a sequence is a plain string join.
 vocab = {
     "<pad>": 0,    # Padding token
     "<bos>": 1,    # Beginning of sequence
     "<eos>": 2,    # End of sequence
     "What": 3,
-    "is": 4,
+    " is": 4,
     " 1": 5,
     "+": 6,
     "1": 7,
@@ -88,13 +105,13 @@ NUM_DECODER_BLOCKS = 2           # 2: Number of sequential transformer decoder b
 NUM_GROUPS = 3                   # 3: Attention groups in Grouped-Query Attention (GQA)
 Q_HEADS = 2                      # 2: Query heads per attention group (total query heads = 3 * 2 = 6)
 D_HEAD = 2                       # 2: Dimension of each attention head vector
-HEAD_DIM = Q_HEADS * D_HEAD      # 4: Combined query projection dimension per group (2 * 2)
+HEAD_DIM = Q_HEADS * D_HEAD      # 4: Output width of one group, also equals HIDDEN_SIZE // NUM_GROUPS
 NUM_EXPERTS = 3                  # 3: Expert feed-forward networks in each MoE block
 TOP_K = 2                        # 2: Number of top experts activated per token by the router
 INTER_SIZE = 16                  # 16: Hidden intermediate dimension inside each SwiGLU expert
 
 MAX_NEW_TOKENS = 128             # Maximum number of tokens generated in autoregressive loop
-EOS_TOKEN_ID = 2                 # Stop generation immediately when this token is emitted
+EOS_TOKEN_ID = 2                 # Stop generation immediately when this token is emitted (vocab["<eos>"])
 EPS = 1e-6                       # Small constant added to variance in RMSNorm to prevent division by zero
 
 # ============================== Weight Initialization & Loading Helper ==============================
@@ -108,6 +125,10 @@ _loaded_weights_cache = {}
 def _get_loaded_weight(name):
     """Retrieve a pre-trained tensor by its hierarchical name from the JSON weights file.
 
+    The file is read once and kept in `_loaded_weights_cache`, because every
+    layer asks for its own tensor and we do not want to re-parse the JSON
+    hundreds of times while the model is being built.
+
     Args:
         name: str, dot-separated hierarchical tensor name
               (e.g., 'decoder.decoder_blocks.0.gqa_block.rms_norm.gamma')
@@ -115,20 +136,29 @@ def _get_loaded_weight(name):
     Returns:
         Nested list containing the tensor weights if found, otherwise None.
     """
-    global _loaded_weights_cache
+    # No weights file configured, or an unnamed tensor: nothing to look up
     if not WEIGHTS_PATH or not name:
         return None
-    if _loaded_weights_cache is None:
-        _loaded_weights_cache = {}
+
+    # Read and cache the file the first time we need it
     if WEIGHTS_PATH not in _loaded_weights_cache and os.path.exists(WEIGHTS_PATH):
         with open(WEIGHTS_PATH, "r", encoding="utf-8") as f:
             _loaded_weights_cache[WEIGHTS_PATH] = json.load(f)
+
     cache = _loaded_weights_cache.get(WEIGHTS_PATH)
     if cache and name in cache:
         return cache[name]
     return None
 
-def _init_weights(*shape, name=None):
+def clear_weights_cache():
+    """Forget any weights read from disk, so the next Model() re-reads WEIGHTS_PATH.
+
+    Only needed when WEIGHTS_PATH changes at runtime, which happens in
+    `training/export_weights.py` and in the tests.
+    """
+    _loaded_weights_cache.clear()
+
+def init_weights(*shape, name=None):
     """Initialize a weight tensor by loading from JSON, or fall back to pseudo-random numbers.
 
     Args:
@@ -167,9 +197,6 @@ def _init_weights(*shape, name=None):
         return weights_3d
     raise ValueError(f"Unsupported shape: {shape}")
 
-init_weights = _init_weights
-_make_matrix = _init_weights
-
 # ============================== Tokenizer ==============================
 
 def split_tokens(text, vocab_dict=vocab):
@@ -179,6 +206,10 @@ def split_tokens(text, vocab_dict=vocab):
     tokens that match the current prefix and selects the longest match. If no token
     matches and the character is a space, the space is skipped. Otherwise, the single
     character is emitted as a fallback token.
+
+    Real tokenizers use Byte Pair Encoding, which learns its merges from data and
+    can represent any input. Greedy longest-match is close enough to show the idea
+    without the training machinery.
 
     Args:
         text: str, raw input text to tokenize.
@@ -201,7 +232,9 @@ def split_tokens(text, vocab_dict=vocab):
             # Skip unmapped whitespace
             i += 1
         else:
-            # Fallback for unknown single characters
+            # Fallback for unknown single characters. Our 12-token vocabulary has
+            # no <unk> entry, so these characters have no ID and encode() will
+            # reject them below.
             tokens.append(text[i])
             i += 1
     return tokens
@@ -216,11 +249,15 @@ class Tokenizer:
             vocab: dict mapping token string -> token ID int.
         """
         self.vocab = vocab
-        # Inverse mapping: token ID int -> token string
+        # Inverse mapping: token ID int -> token string, used by decode()
         self.inv_vocab = {token_id: token for token, token_id in vocab.items()}
 
     def encode(self, text):
         """Tokenize input text and convert tokens into integer token IDs.
+
+        Raises KeyError if the text contains anything outside our 12-token
+        vocabulary, which in practice means anything other than the prompt
+        "What is 1+1?" and the sentence the model was trained on.
 
         Args:
             text: str, raw input text.
@@ -275,7 +312,7 @@ class Layer:
             list: populated weight tensor (loaded from JSON if available, else random).
         """
         full_name = f"{self.name}.{tensor_name}"
-        return _init_weights(*shape, name=full_name)
+        return init_weights(*shape, name=full_name)
 
     def __call__(self, *args, **kwargs):
         """Forward all calls to the layer's predict method."""
@@ -287,28 +324,30 @@ class Layer:
 
 # ============================== Basic Operations ==============================
 
-def softmax(logits):
-    """Convert unnormalized real-valued logits into probabilities that sum to 1.0.
+def softmax(scores):
+    """Convert unnormalized real-valued scores into probabilities that sum to 1.0.
 
     Applies the numerically stable softmax formula:
         softmax(x_i) = exp(x_i - max(x)) / sum(exp(x_j - max(x)))
-    Subtracting max(logits) prevents float overflow in math.exp without altering
+    Subtracting the maximum prevents float overflow in math.exp without altering
     the resulting probability distribution.
 
+    Called twice in this file: once on attention scores, once on router logits.
+
     Args:
-        logits: list of float [n], raw unnormalized scores.
+        scores: list of float [n], raw unnormalized scores.
 
     Returns:
         list of float [n]: normalized probabilities summing to 1.0.
     """
     # 1. Find max value for numerical stability to prevent float overflow
-    max_val = max(logits)
-    # 2. Exponentiate shifted logits
-    exps = [math.exp(x - max_val) for x in logits]
+    max_score = max(scores)
+    # 2. Exponentiate shifted scores
+    exp_scores = [math.exp(s - max_score) for s in scores]
     # 3. Sum of exponentiated values
-    sum_exps = sum(exps)
+    sum_exp = sum(exp_scores)
     # 4. Normalize to get probability distribution
-    probs = [x / sum_exps for x in exps]
+    probs = [s / sum_exp for s in exp_scores]
     return probs
 
 def argmax(logits):
@@ -383,10 +422,11 @@ def add(tensor_a, tensor_b):
     seq_len = len(tensor_a)
     hidden_size = len(tensor_a[0])
 
+    # Walk the two tensors position by position and sum the matching cells
     output = [[0.0] * hidden_size for _ in range(seq_len)]
     for i in range(seq_len):
         for j in range(hidden_size):
-            output[i][j] = float(tensor_a[i][j]) + float(tensor_b[i][j])
+            output[i][j] = tensor_a[i][j] + tensor_b[i][j]
     return output
 
 # ============================== RMSNorm ==============================
@@ -463,8 +503,6 @@ class RMSNorm(Layer):
         if isinstance(tensor_or_vec[0], list):
             return rms_norm(tensor_or_vec, self.gamma)
         return norm_token(tensor_or_vec, self.gamma)
-
-RmsNorm = RMSNorm
 
 # ============================== RoPE ==============================
 
@@ -571,9 +609,10 @@ def attention_token(q_token, k_T, v, i):
     """Compute causal scaled dot-product attention for a single query token.
 
     Computes:
-        scores = (q_token @ k_T) / sqrt(d_head)
-        weights = softmax(scores[:i + 1])   # Causal mask: attend only to tokens 0..i
-        output = weights @ v
+        dot_products = q_token @ k_T
+        scores  = dot_products[:i + 1] / sqrt(d_head)  # Causal mask: keep tokens 0..i
+        weights = softmax(scores) padded with zeros for the future positions
+        output  = weights @ v
 
     Call path: model.predict -> decoder -> decoder_block -> gqa_block -> gqa -> group_0 -> attention_head -> dot_product_attention -> attention_token
 
@@ -587,23 +626,23 @@ def attention_token(q_token, k_T, v, i):
         list of float [d_head]: attention output vector for token i
     """
     d_head = len(q_token)
+    seq_len = len(v)
 
-    # 1. Compute raw similarity dot products: q @ k_T
-    raw_scores = matmul(q_token, k_T)
+    # 1. Compute raw similarity dot products against every key: [seq_len]
+    dot_products = matmul(q_token, k_T)
 
-    # 2. Scale by 1 / sqrt(d_head) to stabilize variance and prevent vanishing gradients
-    scaled_scores = [s / (d_head ** 0.5) for s in raw_scores]
+    # 2. Causal masking plus scaling. We only keep positions 0..i, so token i
+    #    never sees the future, and we divide by sqrt(d_head) to stop the dot
+    #    products from growing with head width and saturating the softmax.
+    scores = []
+    for j in range(i + 1):
+        scores.append(dot_products[j] / (d_head ** 0.5))
 
-    # 3. Causal masking: slice only up to index i + 1 so token i cannot attend to future tokens
-    masked_scores = [scaled_scores[j] for j in range(i + 1)]
+    # 3. Turn the visible scores into probabilities, then pad the masked-out
+    #    future positions with 0.0 so the vector lines up with v: [seq_len]
+    weights = softmax(scores) + [0.0] * (seq_len - (i + 1))
 
-    # 4. Compute attention probabilities over past tokens via softmax
-    weights = softmax(masked_scores)
-
-    # 5. Pad with zeros for future positions to match sequence length
-    weights = weights + [0.0] * (len(raw_scores) - len(weights))
-
-    # 6. Weighted sum of value vectors: sum(weight_j * v_j)
+    # 4. Weighted sum of value vectors: sum(weight_j * v_j)
     token_out = matmul(weights, v)
     return token_out
 
@@ -656,13 +695,13 @@ def attention_head(q, k, v):
     head_outs = [dot_product_attention(q_head, k, v) for q_head in q]
 
     # Concatenate the head vectors for each token: [q_heads * d_head] = [head_dim]
-    group_out = []
+    out = []
     for t in range(seq_len):
-        row = []
+        token_out = []
         for h in range(q_heads):
-            row.extend(head_outs[h][t])
-        group_out.append(row)
-    return group_out
+            token_out.extend(head_outs[h][t])
+        out.append(token_out)
+    return out
 
 # ============================== Grouped-Query Attention (GQA) ==============================
 
@@ -672,6 +711,10 @@ def group_0(rms_out, w_q, w_k, w_v):
     Projects normalized token representations into queries, keys, and values,
     applies Rotary Position Embeddings (RoPE) to queries and keys, and computes
     multi-head attention.
+
+    The name follows the article's diagrams, which walk through the first group
+    (`group_0`) in detail. Every group runs this exact same code with its own
+    copy of the weights.
 
     Call path: model.predict -> decoder -> decoder_block -> gqa_block -> gqa -> group_0
 
@@ -762,7 +805,8 @@ class GQA(Layer):
         self.groups = [Group(name=f"{self.name}.groups.{i}") for i in range(NUM_GROUPS)]
 
     def predict(self, rms_out):
-        """
+        """Run every attention group and concatenate their outputs.
+
         Call path: model.predict -> decoder -> decoder_block -> gqa_block -> gqa
 
         Args:
@@ -796,7 +840,8 @@ class OutMatmul(Layer):
         self.w_matmul = self.init_weights("w_matmul", HIDDEN_SIZE, HIDDEN_SIZE)
 
     def predict(self, gqa_out):
-        """
+        """Project the concatenated attention output back to the residual stream.
+
         Call path: model.predict -> decoder -> decoder_block -> gqa_block -> out_matmul
 
         Args:
@@ -841,7 +886,8 @@ class GQABlock(Layer):
         self.out_matmul = OutMatmul(name=f"{self.name}.out_matmul")
 
     def predict(self, gqa_block_in):
-        """
+        """Normalize, attend, and project the attention sub-layer.
+
         Call path: model.predict -> decoder -> decoder_block -> gqa_block
 
         Args:
@@ -915,7 +961,8 @@ class Expert(Layer):
         self.w_down = self.init_weights("w_down", INTER_SIZE, HIDDEN_SIZE)
 
     def predict(self, token_vec_or_tensor):
-        """
+        """Run this expert's SwiGLU feed-forward network.
+
         Call path: model.predict -> decoder -> decoder_block -> moe_block -> moe -> expert
 
         Args:
@@ -988,7 +1035,8 @@ class Router(Layer):
         self.w_router = self.init_weights("w_router", HIDDEN_SIZE, NUM_EXPERTS)
 
     def predict(self, rms_out):
-        """
+        """Score the experts and return sparse routing weights per token.
+
         Call path: model.predict -> decoder -> decoder_block -> moe_block -> router
 
         Args:
@@ -1001,6 +1049,14 @@ class Router(Layer):
 
 def moe_token(token_vec, top_weights, experts):
     """Compute MoE output for a single token as the weighted sum of expert outputs.
+
+    Only the TOP_K experts the router picked contribute. The rest have a weight
+    of exactly 0.0, and we skip them instead of multiplying their output by
+    zero. That skip is the entire point of a Mixture of Experts: the model can
+    hold many experts while each token only pays for a few of them.
+
+    The article's diagram draws the multiply-by-zero version, because showing
+    every expert makes the routing easier to see. Both produce the same numbers.
 
     Call path: model.predict -> decoder -> decoder_block -> moe_block -> moe -> moe_token
 
@@ -1017,7 +1073,7 @@ def moe_token(token_vec, top_weights, experts):
 
     # Accumulate weighted contributions from active experts
     for i in range(len(experts)):
-        # Skip experts with zero weight to save unnecessary compute
+        # Experts the router did not pick have weight 0.0 and never run
         if top_weights[i] == 0.0:
             continue
         expert_out = experts[i](token_vec)
@@ -1052,7 +1108,8 @@ class MoE(Layer):
         self.experts = [Expert(name=f"{self.name}.experts.{i}") for i in range(NUM_EXPERTS)]
 
     def predict(self, rms_out, top_weights):
-        """
+        """Blend the expert outputs using the router's weights.
+
         Call path: model.predict -> decoder -> decoder_block -> moe_block -> moe
 
         Args:
@@ -1098,7 +1155,8 @@ class MoEBlock(Layer):
         self.moe = MoE(name=f"{self.name}.moe")
 
     def predict(self, moe_in):
-        """
+        """Normalize, route, and mix the experts for this sub-layer.
+
         Call path: model.predict -> decoder -> decoder_block -> moe_block
 
         Args:
@@ -1146,7 +1204,8 @@ class DecoderBlock(Layer):
         self.moe_block_layer = MoEBlock(name=f"{self.name}.moe_block")
 
     def predict(self, decoder_in):
-        """
+        """Run the attention and expert sub-layers with residual connections.
+
         Call path: model.predict -> decoder -> decoder_block
 
         Args:
@@ -1185,7 +1244,8 @@ class Decoder(Layer):
         ]
 
     def predict(self, embed_out):
-        """
+        """Run the token representations through the whole decoder stack.
+
         Call path: model.predict -> decoder
 
         Args:
@@ -1242,7 +1302,8 @@ class Embedding(Layer):
         ]
 
     def predict(self, input_ids):
-        """
+        """Turn token IDs into their embedding vectors.
+
         Call path: model.predict -> embedding
 
         Args:
@@ -1313,6 +1374,14 @@ class LMHead(Layer):
     """Encapsulates final RMS normalization and projection to vocabulary logits."""
 
     def __init__(self, embedding_table_T=None, name="lm_head"):
+        """
+        Args:
+            embedding_table_T: optional [hidden_size, vocab_size] matrix to tie to.
+                Model always passes the transposed embedding table here. When it is
+                omitted, we allocate a separate projection matrix instead, which is
+                what models with untied weights do.
+            name: str, hierarchical identifier for weight lookup.
+        """
         super().__init__(name)
         self.gamma = self.init_weights("gamma", HIDDEN_SIZE)
         # Weight tying: share embedding table transpose to reduce parameters
@@ -1323,7 +1392,8 @@ class LMHead(Layer):
         )
 
     def predict(self, decoder_out):
-        """
+        """Turn the final hidden states into next-token logits.
+
         Call path: model.predict -> lm_head
 
         Args:
@@ -1333,8 +1403,6 @@ class LMHead(Layer):
             [vocab_size]
         """
         return lm_head(decoder_out, self.gamma, self.embedding_table_T)
-
-LmHead = LMHead
 
 # ============================== Sampler ==============================
 
@@ -1360,14 +1428,18 @@ class Model(Layer):
     """Top-level LLM architecture encapsulating embedding, decoder, and LM head.
 
     Contains 4,596 total parameters:
-    - embedding: Embedding layer (144 params)
-    - decoder: 2-block transformer decoder with GQA and MoE (4,440 params)
-    - lm_head: Final RMSNorm and tied projection to logits (12 params)
+    - embedding: token table of 12 x 12 (144 params)
+    - decoder: 2 blocks x 2,220 params (4,440 params)
+        - gqa_block: 444 = 12 gamma + 3 groups x 96 + 144 output projection
+        - moe_block: 1,776 = 12 gamma + 36 router + 3 experts x 576
+    - lm_head: final RMSNorm gamma (12 params), with the output projection tied
+      to the embedding table rather than adding 144 more parameters
     """
 
     def __init__(self, name="model"):
         super().__init__(name)
-        # Seed RNG for deterministic initialization if WEIGHTS_PATH is None
+        # Seed RNG so random fallback weights are reproducible across runs.
+        # Only matters when WEIGHTS_PATH is None or the file is missing.
         _rng.seed(42)
         self.embedding = Embedding(name="embedding")
         self.decoder = Decoder(name="decoder")
@@ -1397,6 +1469,11 @@ class Model(Layer):
     def generate(self, input_ids, max_new_tokens=MAX_NEW_TOKENS):
         """Autoregressively generate next tokens one by one until EOS or max length.
 
+        Every iteration re-runs the whole forward pass over the entire sequence.
+        Production engines avoid that with a KV cache, which stores the keys and
+        values already computed for earlier tokens. We skip it here: caching adds
+        bookkeeping that has nothing to do with the architecture itself.
+
         Args:
             input_ids: list of int [seq_len], prompt token IDs
             max_new_tokens: int, maximum number of new tokens to emit
@@ -1405,7 +1482,9 @@ class Model(Layer):
             list of int [total_seq_len]: prompt plus generated token IDs
         """
         for _ in range(max_new_tokens):
+            # Predict one token from everything generated so far
             next_token_id = greedy_sampler(self, input_ids)
+            # Append it, so the next pass sees a sequence one token longer
             input_ids = input_ids + [next_token_id]
             # Stop immediately when end-of-sequence token is generated
             if next_token_id == EOS_TOKEN_ID:
@@ -1414,7 +1493,7 @@ class Model(Layer):
 
 # ============================== Pipeline & Main ==============================
 
-def pipeline(prompt, tokenizer=None, model=None, max_new_tokens=10):
+def pipeline(prompt, tokenizer=None, model=None, max_new_tokens=MAX_NEW_TOKENS):
     """Convenience end-to-end pipeline: takes a text prompt and returns generated text.
 
     Args:
@@ -1442,7 +1521,10 @@ def pipeline(prompt, tokenizer=None, model=None, max_new_tokens=10):
     return output_text
 
 def main():
-    """Run the model on the example prompt and print the generated output."""
+    """Run the model on the one prompt it knows and print the generated output.
+
+    Prints "What is 1+1? It's 2.<eos>" when the trained weights are in place.
+    """
     prompt = "What is 1+1?"
     output = pipeline(prompt)
     print(output)
