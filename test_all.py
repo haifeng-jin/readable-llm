@@ -74,7 +74,7 @@ class TestReadableLLM(unittest.TestCase):
         tokenizer = Tokenizer(vocab)
         text = "What is 1+1?"
         encoded = tokenizer.encode(text)
-        self.assertEqual(encoded, [1867, 318, 352, 10, 16, 30])
+        self.assertEqual(encoded, [3, 4, 5, 6, 7, 8])
         decoded = tokenizer.decode(encoded)
         self.assertEqual(decoded, "Whatis 1+1?")
 
@@ -173,7 +173,7 @@ class TestReadableLLM(unittest.TestCase):
         self.assertIsInstance(model.lm_head, LMHead)
 
     def test_layers_forward_pass(self):
-        input_ids = [1867, 318, 352]
+        input_ids = [3, 4, 5]
         embedding_layer = Embedding()
         embed_out = embedding_layer(input_ids)
         self.assertEqual(len(embed_out), 3)
@@ -317,7 +317,7 @@ class TestReadableLLM(unittest.TestCase):
     def test_model_end_to_end(self):
         # Model initializes with zero arguments
         model = Model()
-        input_ids = [1867, 318, 352, 10, 16, 30]
+        input_ids = [3, 4, 5, 6, 7, 8]
 
         # Test predict method and __call__
         logits = model.predict(input_ids)
@@ -374,9 +374,7 @@ class TestReadableLLM(unittest.TestCase):
             )
 
             # Test generation with loaded weights
-            extended_vocab = dict(readable_llm.vocab)
-            extended_vocab.update({" It's": 632, ".": 4})
-            tok = readable_llm.Tokenizer(extended_vocab)
+            tok = readable_llm.Tokenizer()
             gen_out = readable_llm.pipeline("What is 1+1?", tokenizer=tok, model=loaded_model)
             self.assertEqual(gen_out, "Whatis 1+1? It's 2.<eos>")
         finally:

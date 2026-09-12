@@ -18,17 +18,6 @@ from training.torch_model import TorchModel
 CHECKPOINT_PATH = os.path.join(os.path.dirname(__file__), "model.pt")
 
 
-def build_tokenizer():
-    """Build tokenizer with vocabulary matching the article examples."""
-    extended_vocab = dict(vocab)
-    # Ensure tokens present in "What is 1+1? It's 2." are registered
-    extended_vocab.update({
-        " It's": 632,
-        ".": 4,
-    })
-    return Tokenizer(extended_vocab)
-
-
 def generate(model, tokenizer, prompt, max_new_tokens=10):
     """Autoregressively generate next tokens using the PyTorch model."""
     token_ids = tokenizer.encode(prompt)
@@ -44,7 +33,7 @@ def generate(model, tokenizer, prompt, max_new_tokens=10):
 
 
 def train(epochs=101, lr=0.01, save_path=CHECKPOINT_PATH):
-    tokenizer = build_tokenizer()
+    tokenizer = Tokenizer(vocab)
     target_sentence = "What is 1+1? It's 2.<eos>"
     tokens = tokenizer.encode(target_sentence)
 

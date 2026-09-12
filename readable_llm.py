@@ -15,9 +15,24 @@ import random
 
 WEIGHTS_PATH = None
 
-# ============================== Model Architecture Constants ==============================
+# ============================== Vocabulary & Architecture Constants ==============================
 
-VOCAB_SIZE = 2000
+vocab = {
+    "<pad>": 0,
+    "<bos>": 1,
+    "<eos>": 2,
+    "What": 3,
+    "is": 4,
+    " 1": 5,
+    "+": 6,
+    "1": 7,
+    "?": 8,
+    " It's": 9,
+    " 2": 10,
+    ".": 11,
+}
+
+VOCAB_SIZE = len(vocab)
 HIDDEN_SIZE = 12
 NUM_DECODER_BLOCKS = 2
 NUM_GROUPS = 3
@@ -95,21 +110,7 @@ def _init_weights(*shape, name=None):
 init_weights = _init_weights
 _make_matrix = _init_weights
 
-# ============================== Vocabulary & Tokenizer ==============================
-
-vocab = {
-    "<pad>": 0,
-    "<bos>": 1,
-    "<eos>": 2,
-    "+": 10,
-    "1": 16,
-    " 2": 17,
-    "2": 18,
-    "?": 30,
-    "is": 318,
-    " 1": 352,
-    "What": 1867,
-}
+# ============================== Tokenizer ==============================
 
 def split_tokens(text, vocab_dict=vocab):
     """

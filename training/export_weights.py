@@ -57,9 +57,7 @@ def convert_and_export(pt_path=CHECKPOINT_PATH, json_path=EXPORT_JSON_PATH):
     readable_llm._loaded_weights_cache = {}
     py_model = PurePyModel()
 
-    extended_vocab = dict(vocab)
-    extended_vocab.update({" It's": 632, ".": 4})
-    tokenizer = Tokenizer(extended_vocab)
+    tokenizer = Tokenizer()
 
     prompt = "What is 1+1?"
     output = pipeline(prompt, tokenizer=tokenizer, model=py_model)
