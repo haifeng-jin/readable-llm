@@ -33,6 +33,14 @@ Run the end-to-end demonstration script:
 python readable_llm.py
 ```
 
+Output:
+
+```
+Whatis 1+1???????????
+```
+
+Because the model uses random initialization out of the box, the generated tokens are random. To generate the learned answer (`"Whatis 1+1? It's 2.<eos>"`), see [Training and Exporting Weights](#training-and-exporting-weights) below.
+
 ### Run Tests
 
 Run the full unit test suite:
