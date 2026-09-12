@@ -333,5 +333,55 @@ class TestReadableLLM(unittest.TestCase):
         self.assertIsInstance(output, str)
         self.assertTrue(output.startswith("Whatis 1+1?"))
 
+    def test_weights_json_loading(self):
+        import json
+        import os
+        import readable_llm
+
+        weights_path = os.path.join(os.path.dirname(__file__), "training", "weights.json")
+        if not os.path.exists(weights_path):
+            self.skipTest("training/weights.json not found")
+
+        # 1. Collect all tensor names requested by readable_llm.Model
+        requested_names = []
+        orig_init = readable_llm.Layer.init_weights
+
+        def tracking_init(layer_self, tensor_name, *shape):
+            full_name = f"{layer_self.name}.{tensor_name}"
+            requested_names.append(full_name)
+            return orig_init(layer_self, tensor_name, *shape)
+
+        readable_llm.Layer.init_weights = tracking_init
+        try:
+            readable_llm.Model()
+        finally:
+            readable_llm.Layer.init_weights = orig_init
+
+        # 2. Check exact key match with weights.json
+        with open(weights_path, "r", encoding="utf-8") as f:
+            weights_data = json.load(f)
+
+        self.assertEqual(set(requested_names), set(weights_data.keys()))
+
+        # 3. Test loading via WEIGHTS_PATH
+        old_path = readable_llm.WEIGHTS_PATH
+        try:
+            readable_llm.WEIGHTS_PATH = weights_path
+            loaded_model = readable_llm.Model()
+            self.assertEqual(
+                loaded_model.embedding.embedding_table,
+                weights_data["embedding.embedding_table"],
+            )
+
+            # Test generation with loaded weights
+            extended_vocab = dict(readable_llm.vocab)
+            extended_vocab.update({" It's": 632, ".": 4})
+            tok = readable_llm.Tokenizer(extended_vocab)
+            gen_out = readable_llm.pipeline("What is 1+1?", tokenizer=tok, model=loaded_model)
+            self.assertEqual(gen_out, "Whatis 1+1? It's 2.<eos>")
+        finally:
+            readable_llm.WEIGHTS_PATH = old_path
+
+
 if __name__ == "__main__":
     unittest.main()

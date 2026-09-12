@@ -8,8 +8,12 @@ Code Organization:
 - Standalone functions perform the complex compute and tensor operations.
 """
 
+import json
 import math
+import os
 import random
+
+WEIGHTS_PATH = None
 
 # ============================== Model Architecture Constants ==============================
 
@@ -31,33 +35,49 @@ EPS = 1e-6
 # ============================== Weight Initialization Helper ==============================
 
 _rng = random.Random(42)
+_loaded_weights_cache = {}
 
-def _init_weights(*shape, val=None, scale=0.02):
+def _get_loaded_weight(name):
+    global _loaded_weights_cache
+    if not WEIGHTS_PATH or not name:
+        return None
+    if _loaded_weights_cache is None:
+        _loaded_weights_cache = {}
+    if WEIGHTS_PATH not in _loaded_weights_cache and os.path.exists(WEIGHTS_PATH):
+        with open(WEIGHTS_PATH, "r", encoding="utf-8") as f:
+            _loaded_weights_cache[WEIGHTS_PATH] = json.load(f)
+    cache = _loaded_weights_cache.get(WEIGHTS_PATH)
+    if cache and name in cache:
+        return cache[name]
+    return None
+
+def _init_weights(*shape, name=None):
     """
     Args:
         *shape: tuple of int
-        val: float
-        scale: float
+        name: str
 
     Returns:
         list
     """
+    loaded = _get_loaded_weight(name)
+    if loaded is not None:
+        return loaded
+
     if len(shape) == 1 and isinstance(shape[0], (list, tuple)):
         # shape: tuple of int
         shape = tuple(shape[0])
 
     if len(shape) == 1:
-        # fill_val: float
-        fill_val = 1.0 if val is None else val
         # weights_1d: [shape[0]]
-        weights_1d = [fill_val] * shape[0]
+        weights_1d = [1.0] * shape[0]
         return weights_1d
     elif len(shape) == 2:
         # rows: int
         # cols: int
         rows, cols = shape
         # weights_2d: [rows, cols]
-        weights_2d = [[_rng.uniform(-scale, scale) for _ in range(cols)] for _ in range(rows)]
+        weights_2d = [[_rng.uniform(-0.02, 0.02) for _ in range(cols)] for _ in range(rows)]
         return weights_2d
     elif len(shape) == 3:
         # heads: int
@@ -66,7 +86,7 @@ def _init_weights(*shape, val=None, scale=0.02):
         heads, rows, cols = shape
         # weights_3d: [heads, rows, cols]
         weights_3d = [
-            [[_rng.uniform(-scale, scale) for _ in range(cols)] for _ in range(rows)]
+            [[_rng.uniform(-0.02, 0.02) for _ in range(cols)] for _ in range(rows)]
             for _ in range(heads)
         ]
         return weights_3d
@@ -158,6 +178,21 @@ class Tokenizer:
 
 class Layer:
     """Base class for all neural network modules."""
+
+    def __init__(self, name=None):
+        self.name = name or self.__class__.__name__.lower()
+
+    def init_weights(self, tensor_name, *shape):
+        """
+        Args:
+            tensor_name: str
+            *shape: tuple of int
+
+        Returns:
+            list
+        """
+        full_name = f"{self.name}.{tensor_name}"
+        return _init_weights(*shape, name=full_name)
 
     def __call__(self, *args, **kwargs):
         """
@@ -309,8 +344,9 @@ def rms_norm(tensor, gamma):
 class RMSNorm(Layer):
     """Encapsulates RMS normalization scale weights."""
 
-    def __init__(self):
-        self.gamma = _init_weights(HIDDEN_SIZE)
+    def __init__(self, name="rms_norm"):
+        super().__init__(name)
+        self.gamma = self.init_weights("gamma", HIDDEN_SIZE)
 
     def predict(self, tensor_or_vec):
         """
@@ -548,10 +584,11 @@ def group_0(rms_out, w_q, w_k, w_v):
 class Group(Layer):
     """Encapsulates Q, K, and V projection weights for a single attention group."""
 
-    def __init__(self):
-        self.w_q = _init_weights(Q_HEADS, HIDDEN_SIZE, D_HEAD)
-        self.w_k = _init_weights(HIDDEN_SIZE, D_HEAD)
-        self.w_v = _init_weights(HIDDEN_SIZE, D_HEAD)
+    def __init__(self, name="group_0"):
+        super().__init__(name)
+        self.w_q = self.init_weights("w_q", Q_HEADS, HIDDEN_SIZE, D_HEAD)
+        self.w_k = self.init_weights("w_k", HIDDEN_SIZE, D_HEAD)
+        self.w_v = self.init_weights("w_v", HIDDEN_SIZE, D_HEAD)
 
     def predict(self, rms_out):
         """
@@ -595,8 +632,9 @@ def gqa(rms_out, groups):
 class GQA(Layer):
     """Encapsulates grouped-query attention across all groups."""
 
-    def __init__(self):
-        self.groups = [Group() for _ in range(NUM_GROUPS)]
+    def __init__(self, name="gqa"):
+        super().__init__(name)
+        self.groups = [Group(name=f"{self.name}.groups.{i}") for i in range(NUM_GROUPS)]
 
     def predict(self, rms_out):
         """
@@ -628,8 +666,9 @@ def out_matmul(gqa_out, w_matmul):
 class OutMatmul(Layer):
     """Encapsulates output projection matrix for GQA."""
 
-    def __init__(self):
-        self.w_matmul = _init_weights(HIDDEN_SIZE, HIDDEN_SIZE)
+    def __init__(self, name="out_matmul"):
+        super().__init__(name)
+        self.w_matmul = self.init_weights("w_matmul", HIDDEN_SIZE, HIDDEN_SIZE)
 
     def predict(self, gqa_out):
         """
@@ -669,10 +708,11 @@ def gqa_block(gqa_block_in, rms_norm, gqa, out_matmul):
 class GQABlock(Layer):
     """Encapsulates normalization, grouped-query attention, and output projection."""
 
-    def __init__(self):
-        self.rms_norm = RMSNorm()
-        self.gqa = GQA()
-        self.out_matmul = OutMatmul()
+    def __init__(self, name="gqa_block"):
+        super().__init__(name)
+        self.rms_norm = RMSNorm(name=f"{self.name}.rms_norm")
+        self.gqa = GQA(name=f"{self.name}.gqa")
+        self.out_matmul = OutMatmul(name=f"{self.name}.out_matmul")
 
     def predict(self, gqa_block_in):
         """
@@ -739,10 +779,11 @@ def expert(tensor, w_gate, w_up, w_down):
 class Expert(Layer):
     """Encapsulates SwiGLU projection weights for a single expert."""
 
-    def __init__(self):
-        self.w_gate = _init_weights(HIDDEN_SIZE, INTER_SIZE)
-        self.w_up = _init_weights(HIDDEN_SIZE, INTER_SIZE)
-        self.w_down = _init_weights(INTER_SIZE, HIDDEN_SIZE)
+    def __init__(self, name="expert"):
+        super().__init__(name)
+        self.w_gate = self.init_weights("w_gate", HIDDEN_SIZE, INTER_SIZE)
+        self.w_up = self.init_weights("w_up", HIDDEN_SIZE, INTER_SIZE)
+        self.w_down = self.init_weights("w_down", INTER_SIZE, HIDDEN_SIZE)
 
     def predict(self, token_vec_or_tensor):
         """
@@ -814,8 +855,9 @@ def router(rms_out, w_router):
 class Router(Layer):
     """Encapsulates routing weights to select top-k experts."""
 
-    def __init__(self):
-        self.w_router = _init_weights(HIDDEN_SIZE, NUM_EXPERTS)
+    def __init__(self, name="router"):
+        super().__init__(name)
+        self.w_router = self.init_weights("w_router", HIDDEN_SIZE, NUM_EXPERTS)
 
     def predict(self, rms_out):
         """
@@ -875,8 +917,9 @@ def moe(rms_out, top_weights, experts):
 class MoE(Layer):
     """Encapsulates the collection of experts and weighted aggregation."""
 
-    def __init__(self):
-        self.experts = [Expert() for _ in range(NUM_EXPERTS)]
+    def __init__(self, name="moe"):
+        super().__init__(name)
+        self.experts = [Expert(name=f"{self.name}.experts.{i}") for i in range(NUM_EXPERTS)]
 
     def predict(self, rms_out, top_weights):
         """
@@ -917,10 +960,11 @@ def moe_block(moe_in, rms_norm, router, moe):
 class MoEBlock(Layer):
     """Encapsulates normalization, router, and mixture of experts."""
 
-    def __init__(self):
-        self.rms_norm = RMSNorm()
-        self.router = Router()
-        self.moe = MoE()
+    def __init__(self, name="moe_block"):
+        super().__init__(name)
+        self.rms_norm = RMSNorm(name=f"{self.name}.rms_norm")
+        self.router = Router(name=f"{self.name}.router")
+        self.moe = MoE(name=f"{self.name}.moe")
 
     def predict(self, moe_in):
         """
@@ -963,9 +1007,10 @@ def decoder_block(decoder_in, gqa_block, moe_block):
 class DecoderBlock(Layer):
     """Encapsulates one GQA block and one MoE block."""
 
-    def __init__(self):
-        self.gqa_block_layer = GQABlock()
-        self.moe_block_layer = MoEBlock()
+    def __init__(self, name="decoder_block"):
+        super().__init__(name)
+        self.gqa_block_layer = GQABlock(name=f"{self.name}.gqa_block")
+        self.moe_block_layer = MoEBlock(name=f"{self.name}.moe_block")
 
     def predict(self, decoder_in):
         """
@@ -999,8 +1044,12 @@ def decoder(embed_out, decoder_blocks):
 class Decoder(Layer):
     """Encapsulates the sequential stack of decoder blocks."""
 
-    def __init__(self):
-        self.decoder_blocks = [DecoderBlock() for _ in range(NUM_DECODER_BLOCKS)]
+    def __init__(self, name="decoder"):
+        super().__init__(name)
+        self.decoder_blocks = [
+            DecoderBlock(name=f"{self.name}.decoder_blocks.{i}")
+            for i in range(NUM_DECODER_BLOCKS)
+        ]
 
     def predict(self, embed_out):
         """
@@ -1049,8 +1098,9 @@ def embedding(input_ids, embedding_table):
 class Embedding(Layer):
     """Encapsulates token embedding table and lookup."""
 
-    def __init__(self):
-        self.embedding_table = _init_weights(VOCAB_SIZE, HIDDEN_SIZE)
+    def __init__(self, name="embedding"):
+        super().__init__(name)
+        self.embedding_table = self.init_weights("embedding_table", VOCAB_SIZE, HIDDEN_SIZE)
         self.embedding_table_T = [
             [self.embedding_table[r][c] for r in range(VOCAB_SIZE)]
             for c in range(HIDDEN_SIZE)
@@ -1120,16 +1170,13 @@ def lm_head(decoder_out, gamma, embedding_table_T):
 class LMHead(Layer):
     """Encapsulates final RMS normalization and projection to vocabulary logits."""
 
-    def __init__(self, embedding_table_T=None):
-        """
-        Args:
-            embedding_table_T: [hidden_size, vocab_size]
-        """
-        self.gamma = _init_weights(HIDDEN_SIZE)
+    def __init__(self, embedding_table_T=None, name="lm_head"):
+        super().__init__(name)
+        self.gamma = self.init_weights("gamma", HIDDEN_SIZE)
         self.embedding_table_T = (
             embedding_table_T
             if embedding_table_T is not None
-            else _init_weights(HIDDEN_SIZE, VOCAB_SIZE)
+            else self.init_weights("embedding_table_T", HIDDEN_SIZE, VOCAB_SIZE)
         )
 
     def predict(self, decoder_out):
@@ -1168,11 +1215,12 @@ def greedy_sampler(model, input_ids):
 class Model(Layer):
     """Top-level LLM architecture encapsulating embedding, decoder, and LM head."""
 
-    def __init__(self):
+    def __init__(self, name="model"):
+        super().__init__(name)
         _rng.seed(42)
-        self.embedding = Embedding()
-        self.decoder = Decoder()
-        self.lm_head = LMHead(self.embedding.embedding_table_T)
+        self.embedding = Embedding(name="embedding")
+        self.decoder = Decoder(name="decoder")
+        self.lm_head = LMHead(self.embedding.embedding_table_T, name="lm_head")
 
     def predict(self, input_ids):
         """
