@@ -53,6 +53,23 @@ Code Organization:
 - Standalone pure functions execute the underlying mathematical operations
   (RMSNorm, RoPE, attention, SwiGLU, softmax, and matrix multiplication).
 
+Tensor Shapes (No Batch Dimension):
+-----------------------------------
+Every tensor here is a nested Python list, and every one of them is commented
+with its shape, both in the docstrings and above each assignment in the code.
+
+None of those shapes have a batch dimension. Real frameworks put batch first
+(`[batch_size, seq_len, hidden_size]`) so they can push many sequences through
+the GPU at once, but that leading axis is a throughput trick, not part of the
+architecture. This file runs one sequence at a time, so an activation is
+`[seq_len, hidden_size]` and a single token vector is just `[hidden_size]`.
+Dropping the batch axis removes one level of indexing from every loop.
+
+Most dimension names in the shape comments are the constants defined below:
+vocab_size, hidden_size, num_groups, q_heads, d_head, head_dim, num_experts,
+inter_size, and TOP_K. The exception is seq_len, which is however many tokens
+are in the sequence right now and grows by one with each generated token.
+
 Reading Guide:
 --------------
 The file is ordered bottom-up, from the smallest operations to the full model:
