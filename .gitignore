@@ -11,3 +11,7 @@ build/
 env/
 venv/
 .DS_Store
+
+# PyTorch checkpoints from training/train.py. The exported training/weights.json
+# is what the model actually loads, so the checkpoint stays out of the repo.
+*.pt
