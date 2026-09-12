@@ -13,7 +13,7 @@ import math
 import os
 import random
 
-WEIGHTS_PATH = None
+WEIGHTS_PATH = os.path.join(os.path.dirname(__file__), "training", "weights.json")
 
 # ============================== Vocabulary & Architecture Constants ==============================
 
