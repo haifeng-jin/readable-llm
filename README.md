@@ -33,13 +33,13 @@ Run the end-to-end demonstration script:
 python readable_llm.py
 ```
 
-Output:
+The script runs the prompt `"What is 1+1?"` and outputs:
 
 ```
 Whatis 1+1? It's 2.<eos>
 ```
 
-The script automatically loads the pre-trained weights from `training/weights.json`. To run with random initialization instead, set `WEIGHTS_PATH = None` in `readable_llm.py`.
+This tiny model was trained specifically on this single sentence, so it can only answer this one prompt. It automatically loads the pre-trained weights from `training/weights.json`. To run with random initialization instead, set `WEIGHTS_PATH = None` in `readable_llm.py`.
 
 ### Run Tests
 
